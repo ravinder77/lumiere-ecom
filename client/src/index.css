@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-stone-50 text-stone-800 font-sans antialiased;
+  }
+
+  ::selection {
+    @apply bg-accent/20 text-stone-900;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-stone-100;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-stone-300 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-stone-400;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 bg-stone-900 text-stone-50 
+           px-6 py-3 text-sm font-medium tracking-wide
+           hover:bg-stone-700 active:bg-stone-800
+           transition-all duration-200 ease-out
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 border border-stone-300 text-stone-700 
+           px-6 py-3 text-sm font-medium tracking-wide
+           hover:border-stone-900 hover:text-stone-900
+           transition-all duration-200;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 text-stone-600 
+           px-4 py-2 text-sm font-medium
+           hover:text-stone-900 hover:bg-stone-100
+           transition-all duration-200;
+  }
+
+  .card {
+    @apply bg-white border border-stone-200 overflow-hidden;
+  }
+
+  .input {
+    @apply w-full border border-stone-300 px-4 py-3 text-sm text-stone-800
+           placeholder:text-stone-400 
+           focus:outline-none focus:border-stone-900
+           transition-colors duration-200;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 text-xs font-medium tracking-wide;
+  }
+}
+
+@layer utilities {
+  .animate-delay-100 { animation-delay: 100ms; }
+  .animate-delay-200 { animation-delay: 200ms; }
+  .animate-delay-300 { animation-delay: 300ms; }
+  .animate-delay-400 { animation-delay: 400ms; }
+
+  .text-balance { text-wrap: balance; }
+}
