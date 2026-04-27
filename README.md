@@ -275,3 +275,4 @@ Use for order confirmation, password reset tokens, and email verification.
 - **Server**: Railway / Render / Fly.io (`cd server && npm run build` → `server/dist/`)
 - **DB**: Supabase / Neon (free PostgreSQL tiers available)
 # lumiere-ecom
+# lumiere-ecom
