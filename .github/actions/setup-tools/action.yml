@@ -1,0 +1,11 @@
+name: "Setup DevSecOps Tools"
+description: "Install Trivy, Syft, Cosign"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Trivy
+      shell: bash
+      run: |
+        sudo apt-get update
+        

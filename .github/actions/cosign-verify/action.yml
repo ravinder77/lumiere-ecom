@@ -1,0 +1,5 @@
+name: cosign-verify
+author: ravinder
+description: cosign-verify
+runs:
+  using:

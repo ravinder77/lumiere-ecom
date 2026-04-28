@@ -20,7 +20,7 @@ A production-ready ecommerce platform with authentication, wishlist, reviews, or
 
 ```
 ecommerce/
-├── client/
+├── frontend/
 │   └── src/
 │       ├── app/
 │       │   ├── App.tsx                Client bootstrap + providers
@@ -69,7 +69,7 @@ ecommerce/
 │       ├── api.ts                Products / cart / orders API
 │       └── extraApi.ts           Wishlist / reviews / admin API
 │
-└── server/
+└── backend/
     └── src/
         ├── app/
         │   └── createApp.ts          Express bootstrap and middleware
@@ -104,17 +104,13 @@ ecommerce/
 ### 1. Install
 
 ```bash
-cd client && npm install
-cd ../server && npm install
+cd frontend && npm install
+cd ../backend && npm install
 ```
 
 ### 2. Configure environment
 
-```bash
-cp server/.env.example server/.env
-```
-
-Edit `server/.env`:
+Edit `backend/.env`:
 
 ```env
 DATABASE_URL="postgresql://postgres:password@localhost:5432/lumiere_ecommerce"
@@ -131,7 +127,7 @@ NODE_ENV=development
 ### 3. Database setup
 
 ```bash
-cd server
+cd backend
 
 # Preferred: Prisma migrations
 npx prisma migrate dev --name init
@@ -148,11 +144,11 @@ npm run db:seed
 
 ```bash
 # Terminal 1
-cd server
+cd backend
 npm run dev   # http://localhost:4000
 
 # Terminal 2
-cd client
+cd frontend
 npm run dev   # http://localhost:5173
 ```
 

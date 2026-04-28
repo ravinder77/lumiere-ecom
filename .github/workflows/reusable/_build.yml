@@ -1,0 +1,181 @@
+name: Reusable › Build & Push to ECR
+
+on:
+  workflow_call:
+    inputs:
+      # ── Image metadata ─────────────────────────────────────
+      service:
+        description: "Service to build: frontend | backend"
+        required: true
+        type: string
+
+      image-tag:
+        description: "Primary image tag (e.g. sha-abc1234 or v1.2.3)"
+        required: true
+        type: string
+
+      platforms:
+        description: "buildx platforms"
+        required: false
+        type: string
+        default: "linux/amd64,linux/arm64"
+
+      # ── Build context ──────────────────────────────────────
+      context:
+        description: "Docker build context path"
+        required: false
+        type: string
+        default: "."
+
+      dockerfile-path:
+        description: "Path to Dockerfile relative to context"
+        required: false
+        type: string
+        default: "Dockerfile"
+
+      build-args:
+        description: "Docker build args (KEY=VALUE newline-separated)"
+        required: false
+        type: string
+        default: ""
+
+      # ── Feature flags ──────────────────────────────────────
+      push:
+        description: "Push image to ECR after build"
+        required: false
+        type: boolean
+        default: true
+
+      provenance:
+        description: "Attach SLSA provenance attestation (mode=max)"
+        required: false
+        type: boolean
+        default: true
+
+      sbom:
+        description: "Attach SBOM attestation via buildkit"
+        required: false
+        type: boolean
+        default: true
+
+      cache-scope:
+        description: "Unique cache scope key (default: image_name)"
+        required: false
+        type: string
+        default: ""
+
+    outputs:
+      image_uri:
+        description: "Full ECR URI with digest (repo@sha256:…)"
+        value: ${{ jobs.build.outputs.image_uri }}
+
+      image_digest:
+        description: "Image digest (sha256:…)"
+        value: ${{ jobs.build.outputs.image_digest }}
+
+      image_tag:
+        description: "Tag that was pushed"
+        value: ${{ jobs.build.outputs.image_tag }}
+
+    secrets:
+      AWS_ROLE_ARN:
+        required: true
+      AWS_REGION:
+        required: true
+      ECR_REGISTRY:
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: build-${{ inputs.service }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name:  Build › ${{ inputs.service }}
+    runs-on: ubuntu-latest
+
+    outputs:
+      image-uri:    ${{steps.meta.outputs.image-uri}}
+      image-digest: ${{ steps.push.outputs.digest }}
+      image-tag:    ${{inputs.image-tag}}
+
+    steps:
+      # ── 0. Harden the runner ───────
+      - name: Harden runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        with:
+          egress-policy: 'audit'
+
+      # ── 1. Checkout ────────
+      - name: Checkout the Source Code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      # ---2. AWS auth via OIDC (no static keys) ----
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          role-to-assume: ${{secrets.AWS_ROLE_ARN}}
+          aws-region: ${{secrets.AWS_REGION}}
+
+      #--- 3. Login to ECR ----
+      - name:  Login to Amazon ECR
+        id: ecr-login
+        uses: ./.github/actions/aws-ecr-login
+
+      #--- 4. Ensure repository exists ---------
+
+
+
+      #--- 5. Prepare image URI -------------
+      - name: Set Image Metadata
+        id: meta
+        env:
+          REGISTRY: ${{steps.ecr-login.outputs.registry}}
+          SERVICE:  ${{inputs.service}}
+          TAG:      ${{inputs.image-tag}}
+        run: |
+          REPO="lumiere-${SERVICE}"
+          IMAGE_URI="${REGISTRY}/${REPO}:${TAG}"
+          echo "image-uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+          echo "repository=${REPO}"     >> "$GITHUB_OUTPUT"
+          echo "registry=${REGISTRY}"   >> "$GITHUB_OUTPUT"
+
+      # --- 6. Buildx setup ----------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=moby/buildkit:v0.11.0
+
+
+      # --- 7. Build + Push image  ----------------
+      - name: Build & Push Image
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{inputs.service}}
+          file: ./${{inputs.service}}/${{inputs.dockerfile-path}}
+          push: ${{inputs.push}}
+          tags: |
+            ${{ steps.meta.outputs.image-uri }}
+            ${{ steps.meta.outputs.registry }}/lumiere-${{ inputs.service }}:latest
+          build-args: ${{inputs.build-args}}
+          cache-from: type=gha,scope=${{ inputs.service }}
+          provenance: true
+          sbom: true
+            
+      - name: Output Image Summary
+        run: |
+          echo "### Image Build" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field    | Value |"                                      >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|"                                      >> "$GITHUB_STEP_SUMMARY"
+          echo "| Service  | \`${{ inputs.service }}\` |"                  >> "$GITHUB_STEP_SUMMARY"
+          echo "| URI      | \`${{ steps.meta.outputs.image-uri }}\` |"    >> "$GITHUB_STEP_SUMMARY"
+          echo "| Digest   | \`${{ steps.push.outputs.digest }}\` |"       >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tag      | \`${{ inputs.image-tag }}\` |"                >> "$GITHUB_STEP_SUMMARY"
+            
+            
