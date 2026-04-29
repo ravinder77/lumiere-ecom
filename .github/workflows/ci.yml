@@ -1,4 +1,212 @@
-name: ci.yaml
+name: CI
+
 on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "client/**"
+      - "server/**"
+      - ".github/workflows/**"
+      - ".github/actions/**"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - ".github/workflows/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  AWS_REGION:  ap-south-1
+  IMAGE_TAG:   ${{ github.sha }}
+
+# ─── Required secrets ────────────────────────────────────────────────────────
+# AWS_ROLE_ARN          – OIDC role for ECR push + image pull
+# GITOPS_TOKEN          – PAT with write access to lumiere-gitops
+# SEMGREP_APP_TOKEN     – Semgrep Cloud (optional)
+# SONAR_TOKEN           – SonarQube token (optional)
+# SONAR_HOST_URL        – SonarQube host URL (optional)
+# ─────────────────────────────────────────────────────────────────────────────
 
 jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 0 ▸ Detect which services changed
+  # ═══════════════════════════════════════════════════════════════════════════
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      services: ${{ steps.filter.outputs.changes }}
+      client:   ${{ steps.filter.outputs.client }}
+      server:   ${{ steps.filter.outputs.server }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            client:
+              - 'client/**'
+              - '.github/workflows/**'
+              - '.github/actions/**'
+            server:
+              - 'server/**'
+              - '.github/workflows/**'
+              - '.github/actions/**'
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 1 ▸ Secrets detection (repo-wide, runs once)
+  # ═══════════════════════════════════════════════════════════════════════════
+  secrets-detect:
+    name: Secrets Detection
+    needs: changes
+    uses: ./.github/workflows/reusable/_secrets-detect.yml
+    with:
+      service:       repo
+      scan-path:     "."
+      fail-on-leak:  true
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 2 ▸ SAST — matrix: client + server
+  # ═══════════════════════════════════════════════════════════════════════════
+  sast:
+    name: SAST
+    needs: [changes, secrets-detect]
+    if: needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.changes.outputs.services) }}
+    uses: ./.github/workflows/reusable/_sast.yml
+    with:
+      service:          ${{ matrix.service }}
+      language:         javascript
+      fail-on-severity: ERROR
+    secrets:
+      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+      SONAR_TOKEN:       ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL:    ${{ secrets.SONAR_HOST_URL }}
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 3 ▸ Build & push — matrix: client + server
+  # ═══════════════════════════════════════════════════════════════════════════
+  build:
+    name: Build & Push
+    needs: [changes, sast]
+    if: needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: client
+            enabled: ${{ needs.changes.outputs.client == 'true' }}
+          - service: server
+            enabled: ${{ needs.changes.outputs.server == 'true' }}
+    uses: ./.github/workflows/reusable/_build.yml
+    with:
+      service:   ${{ matrix.service }}
+      image-tag: ${{ github.sha }}
+      push:      ${{ github.event_name != 'pull_request' }}
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 4 ▸ Container scan — matrix: client + server
+  # ═══════════════════════════════════════════════════════════════════════════
+  container-scan:
+    name: Container Scan
+    needs: [changes, build]
+    if: |
+      github.event_name != 'pull_request' &&
+      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.changes.outputs.services) }}
+    uses: ./.github/workflows/reusable/_container-scan.yml
+    with:
+      service:          ${{ matrix.service }}
+      image-uri:        ${{ needs.build.outputs.image-uri }}   # resolved per matrix
+      severity:         CRITICAL,HIGH
+      fail-on-findings: true
+      ignore-unfixed:   true
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 5 ▸ Sign & Attest — matrix: client + server
+  # ═══════════════════════════════════════════════════════════════════════════
+  sign-attest:
+    name: Sign & Attest
+    needs: [changes, build, container-scan]
+    if: |
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.changes.outputs.services) }}
+    uses: ./.github/workflows/reusable/_sign-attest.yml
+    with:
+      service:      ${{ matrix.service }}
+      image-uri:    ${{ needs.build.outputs.image-uri }}
+      image-digest: ${{ needs.build.outputs.image-digest }}
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 6 ▸ Deploy to dev — matrix: client + server
+  # ═══════════════════════════════════════════════════════════════════════════
+  deploy-dev:
+    name: Deploy › dev
+    needs: [changes, build, sign-attest]
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.changes.outputs.services) }}
+    uses: ./.github/workflows/reusable/_deploy.yml
+    with:
+      service:       ${{ matrix.service }}
+      image-tag:     ${{ github.sha }}
+      image-digest:  ${{ needs.build.outputs.image-digest }}
+      environment:   dev
+      gitops-repo:   your-org/lumiere-gitops
+      gitops-branch: main
+    secrets:
+      GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 7 ▸ Pipeline summary
+  # ═══════════════════════════════════════════════════════════════════════════
+  summary:
+    name: Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [secrets-detect, sast, build, container-scan, sign-attest, deploy-dev]
+    if: always()
+    steps:
+      - name: Write summary
+        run: |
+          echo "# 🚀 Lumiere CI Pipeline" >> "$GITHUB_STEP_SUMMARY"
+          echo ""                          >> "$GITHUB_STEP_SUMMARY"
+          echo "| Stage            | Status |"                                               >> "$GITHUB_STEP_SUMMARY"
+          echo "|------------------|--------|"                                               >> "$GITHUB_STEP_SUMMARY"
+          echo "| Secrets Detect   | ${{ needs.secrets-detect.result }} |"                  >> "$GITHUB_STEP_SUMMARY"
+          echo "| SAST             | ${{ needs.sast.result }} |"                            >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build & Push     | ${{ needs.build.result }} |"                           >> "$GITHUB_STEP_SUMMARY"
+          echo "| Container Scan   | ${{ needs.container-scan.result }} |"                  >> "$GITHUB_STEP_SUMMARY"
+          echo "| Sign & Attest    | ${{ needs.sign-attest.result }} |"                     >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deploy › dev     | ${{ needs.deploy-dev.result }} |"                     >> "$GITHUB_STEP_SUMMARY"
+          echo ""                          >> "$GITHUB_STEP_SUMMARY"
+          echo "**Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> "$GITHUB_STEP_SUMMARY"

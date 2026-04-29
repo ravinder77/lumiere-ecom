@@ -1,4 +1,100 @@
-name: nightly-scan.yml
+name: Nightly Scan
+
 on:
+  schedule:
+    - cron: "0 1 * * *"   # 01:00 UTC = 06:30 IST daily
+  workflow_dispatch:
+    inputs:
+      services:
+        description: "Services to scan (comma-separated: client,server)"
+        required: false
+        default: "client,server"
 
 jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Full security sweep on latest ECR images
+  # ═══════════════════════════════════════════════════════════════════════════
+  container-scan-client:
+    name: Container Scan › client
+    uses: ./.github/workflows/reusable/_container-scan.yml
+    with:
+      service:          client
+      image-uri:        ${{ vars.ECR_REGISTRY }}/lumiere-client:latest
+      severity:         CRITICAL,HIGH,MEDIUM
+      fail-on-findings: false   # nightly: alert but don't block
+      ignore-unfixed:   false
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+
+  container-scan-server:
+    name: Container Scan › server
+    uses: ./.github/workflows/reusable/_container-scan.yml
+    with:
+      service:          server
+      image-uri:        ${{ vars.ECR_REGISTRY }}/lumiere-server:latest
+      severity:         CRITICAL,HIGH,MEDIUM
+      fail-on-findings: false
+      ignore-unfixed:   false
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+
+  sca-client:
+    name: SCA › client
+    uses: ./.github/workflows/reusable/_sca.yml
+    with:
+      service:          client
+      fail-on-severity: critical   # relaxed for nightly
+      generate-sbom:    true
+
+  sca-server:
+    name: SCA › server
+    uses: ./.github/workflows/reusable/_sca.yml
+    with:
+      service:          server
+      fail-on-severity: critical
+      generate-sbom:    true
+
+  secrets-detect:
+    name: Secrets Detection
+    uses: ./.github/workflows/reusable/_secrets-detect.yml
+    with:
+      service:      repo
+      fail-on-leak: true
+
+  iac-scan:
+    name: IaC Scan
+    uses: ./.github/workflows/reusable/_iac-scan.yml
+    with:
+      scan-path:          "."
+      checkov-frameworks: "dockerfile,kubernetes,github_actions,secrets"
+      soft-fail:          true
+
+  notify:
+    name: Notify › Nightly Results
+    needs:
+      - container-scan-client
+      - container-scan-server
+      - sca-client
+      - sca-server
+      - secrets-detect
+      - iac-scan
+    if: always()
+    uses: ./.github/workflows/reusable/_notify.yml
+    with:
+      status: >-
+        ${{
+          contains(needs.*.result, 'failure') && 'failure' ||
+          contains(needs.*.result, 'cancelled') && 'cancelled' ||
+          'success'
+        }}
+      service:       "nightly-scan"
+      environment:   "prod"
+      extra-message: >-
+        Container scan: client=${{ needs.container-scan-client.result }},
+        server=${{ needs.container-scan-server.result }} |
+        SCA: client=${{ needs.sca-client.result }},
+        server=${{ needs.sca-server.result }} |
+        Secrets: ${{ needs.secrets-detect.result }} |
+        IaC: ${{ needs.iac-scan.result }}
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

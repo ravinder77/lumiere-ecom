@@ -1,4 +1,132 @@
-name: _iac-scan.yml
+name: Reusable › IaC Scan (Checkov + tflint)
+
 on:
+  workflow_call:
+    inputs:
+      scan-path:
+        description: "Directory to scan (relative to repo root)"
+        required: false
+        type: string
+        default: "."
+      framework:
+        description: "Checkov framework: terraform | kubernetes | dockerfile | all"
+        required: false
+        type: string
+        default: "all"
+      soft-fail:
+        description: "Don't fail pipeline on findings (report only)"
+        required: false
+        type: boolean
+        default: false
+      skip-checks:
+        description: "Comma-separated Checkov check IDs to skip"
+        required: false
+        type: string
+        default: ""
+    outputs:
+      failed-count:
+        description: "Number of failed Checkov checks"
+        value: ${{ jobs.checkov.outputs.failed-count }}
 
 jobs:
+  # ─── Checkov ──────────────────────────────────────────────────────────────
+  checkov:
+    name: Checkov › ${{ inputs.framework }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    outputs:
+      failed-count: ${{ steps.parse.outputs.failed-count }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Checkov
+        id: checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory:         ${{ inputs.scan-path }}
+          framework:         ${{ inputs.framework }}
+          output_format:     sarif
+          output_file_path:  checkov-results.sarif
+          soft_fail:         ${{ inputs.soft-fail }}
+          skip_check:        ${{ inputs.skip-checks }}
+          download_external_modules: true
+
+      - name: Parse results
+        id: parse
+        if: always()
+        run: |
+          if [ -f checkov-results.sarif ]; then
+            FAILED=$(python3 -c \
+              "import json; d=json.load(open('checkov-results.sarif')); \
+               print(len(d.get('runs',[])[0].get('results',[])))" 2>/dev/null || echo "0")
+          else
+            FAILED="0"
+          fi
+          echo "failed-count=${FAILED}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-results.sarif
+          category:   checkov-${{ inputs.framework }}
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: checkov-${{ github.run_id }}
+          path: checkov-results.sarif
+          retention-days: 30
+
+  # ─── tflint (Terraform-specific) ──────────────────────────────────────────
+  tflint:
+    name: tflint › Terraform lint
+    runs-on: ubuntu-latest
+    if: inputs.framework == 'terraform' || inputs.framework == 'all'
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup tflint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: Init tflint with AWS plugin
+        run: |
+          cat > ~/.tflint.hcl << 'EOF'
+          plugin "aws" {
+            enabled = true
+            version = "0.29.0"
+            source  = "github.com/terraform-linters/tflint-ruleset-aws"
+          }
+          EOF
+          tflint --init
+
+      - name: Run tflint across all Terraform dirs
+        run: |
+          find ${{ inputs.scan-path }} -name "*.tf" -exec dirname {} \; | sort -u | \
+          while read dir; do
+            echo "=== Linting: ${dir} ==="
+            tflint --chdir="${dir}" --format=compact || true
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### IaC Scan"                                       >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tool      | Result |"                                >> "$GITHUB_STEP_SUMMARY"
+          echo "|-----------|--------|"                                >> "$GITHUB_STEP_SUMMARY"
+          echo "| Checkov   | \`${{ jobs.checkov.outputs.failed-count }}\` failed checks |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| tflint    | See job logs |"                          >> "$GITHUB_STEP_SUMMARY"
+          echo "| Framework | \`${{ inputs.framework }}\` |"          >> "$GITHUB_STEP_SUMMARY"
+          echo "| Path      | \`${{ inputs.scan-path }}\` |"          >> "$GITHUB_STEP_SUMMARY"

@@ -1,4 +1,268 @@
-name: pr-checks.yml
+name: PR Checks
+
 on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Guard — skip draft PRs
+  # ═══════════════════════════════════════════════════════════════════════════
+  guard:
+    name: PR Guard
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - id: check
+        run: |
+          if [ "${{ github.event.pull_request.draft }}" = "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "⏭️ Draft PR — skipping checks"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Detect changed files
+  # ═══════════════════════════════════════════════════════════════════════════
+  changes:
+    name: Detect Changes
+    needs: guard
+    if: needs.guard.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      client: ${{ steps.filter.outputs.client }}
+      server: ${{ steps.filter.outputs.server }}
+      services: ${{ steps.filter.outputs.changes }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            client:
+              - 'client/**'
+            server:
+              - 'server/**'
+            workflows:
+              - '.github/**'
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 1 ▸ PR title lint (Conventional Commits)
+  # ═══════════════════════════════════════════════════════════════════════════
+  pr-title:
+    name: PR Title Lint
+    needs: guard
+    if: needs.guard.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            docs
+            refactor
+            test
+            ci
+            perf
+            revert
+          requireScope: false
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 2 ▸ Secrets detection (fast gate)
+  # ═══════════════════════════════════════════════════════════════════════════
+  secrets-detect:
+    name: Secrets Detection
+    needs: [guard, changes]
+    if: needs.guard.outputs.skip != 'true'
+    uses: ./.github/workflows/reusable/_secrets-detect.yml
+    with:
+      service:      repo
+      fail-on-leak: true
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 3 ▸ Lint — matrix: client + server
+  # ═══════════════════════════════════════════════════════════════════════════
+  lint:
+    name: Lint
+    needs: [guard, changes]
+    if: |
+      needs.guard.outputs.skip != 'true' &&
+      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.changes.outputs.services) }}
+
+    defaults:
+      run:
+        working-directory: ./${{ matrix.service }}
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: ${{ matrix.service }}/package-lock.json
+      - name: Install
+        run: npm ci --prefer-offline
+      - name: ESLint
+        run: npm run lint -- --format=github
+      - name: Type check
+        run: npm run typecheck || true   # optional — remove '|| true' once TS is strict
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 4 ▸ Unit tests — matrix: client + server
+  # ═══════════════════════════════════════════════════════════════════════════
+  test:
+    name: Unit Tests
+    needs: [guard, changes, lint]
+    if: |
+      needs.guard.outputs.skip != 'true' &&
+      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.changes.outputs.services) }}
+
+    defaults:
+      run:
+        working-directory: ./${{ matrix.service }}
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: ${{ matrix.service }}/package-lock.json
+      - name: Install
+        run: npm ci --prefer-offline
+      - name: Run tests with coverage
+        run: npm test -- --coverage --ci
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.service }}-${{ github.run_id }}
+          path: ${{ matrix.service }}/coverage/
+          retention-days: 7
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 5 ▸ SAST (PR scope)
+  # ═══════════════════════════════════════════════════════════════════════════
+  sast:
+    name: SAST
+    needs: [guard, changes, secrets-detect]
+    if: |
+      needs.guard.outputs.skip != 'true' &&
+      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.changes.outputs.services) }}
+    uses: ./.github/workflows/reusable/_sast.yml
+    with:
+      service:          ${{ matrix.service }}
+      language:         javascript
+      fail-on-severity: ERROR
+    secrets:
+      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+      SONAR_TOKEN:       ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL:    ${{ secrets.SONAR_HOST_URL }}
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 6 ▸ SCA — dependency audit (PR scope)
+  # ═══════════════════════════════════════════════════════════════════════════
+  sca:
+    name: SCA
+    needs: [guard, changes]
+    if: |
+      needs.guard.outputs.skip != 'true' &&
+      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.changes.outputs.services) }}
+    uses: ./.github/workflows/reusable/_sca.yml
+    with:
+      service:          ${{ matrix.service }}
+      fail-on-severity: high
+      generate-sbom:    false   # skip SBOM on PRs — generated post-merge
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 7 ▸ IaC scan (if workflows or Dockerfiles changed)
+  # ═══════════════════════════════════════════════════════════════════════════
+  iac-scan:
+    name: IaC Scan
+    needs: [guard, changes]
+    if: |
+      needs.guard.outputs.skip != 'true' &&
+      needs.changes.outputs.workflows == 'true'
+    uses: ./.github/workflows/reusable/_iac-scan.yml
+    with:
+      scan-path:          "."
+      checkov-frameworks: "dockerfile,github_actions,secrets"
+      soft-fail:          false
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 8 ▸ Build check (no push) — validates Dockerfile compiles
+  # ═══════════════════════════════════════════════════════════════════════════
+  build-check:
+    name: Build Check (no push)
+    needs: [guard, changes, lint, test]
+    if: |
+      needs.guard.outputs.skip != 'true' &&
+      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.changes.outputs.services) }}
+    uses: ./.github/workflows/reusable/_build.yml
+    with:
+      service:   ${{ matrix.service }}
+      image-tag: pr-${{ github.event.pull_request.number }}
+      push:      false   # dry-run only
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 9 ▸ PR status gate (all checks must pass)
+  # ═══════════════════════════════════════════════════════════════════════════
+  pr-gate:
+    name: ✅ PR Gate
+    runs-on: ubuntu-latest
+    needs: [pr-title, secrets-detect, lint, test, sast, sca, build-check]
+    if: always()
+    steps:
+      - name: Evaluate all checks
+        run: |
+          RESULTS='${{ toJson(needs) }}'
+          FAILED=$(echo "$RESULTS" | python3 -c "
+          import sys, json
+          needs = json.load(sys.stdin)
+          failed = [k for k, v in needs.items() if v.get('result') not in ('success', 'skipped')]
+          print('\n'.join(failed))
+          ")
+          if [ -n "$FAILED" ]; then
+            echo "❌ The following checks failed:"
+            echo "$FAILED"
+            exit 1
+          fi
+          echo "✅ All PR checks passed"

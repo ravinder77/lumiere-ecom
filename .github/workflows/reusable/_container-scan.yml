@@ -1,4 +1,139 @@
-name: _container-scan.yml
+name: Reusable › Container Scan (Trivy)
+
 on:
+  workflow_call:
+    inputs:
+      service:
+        description: "Service label: frontend | backend"
+        required: true
+        type: string
+      image-uri:
+        description: "Full ECR image URI to scan"
+        required: true
+        type: string
+      severity:
+        description: "Severities to flag: CRITICAL,HIGH,MEDIUM,LOW"
+        required: false
+        type: string
+        default: "CRITICAL,HIGH"
+      fail-on-findings:
+        description: "Fail workflow if findings exceed threshold"
+        required: false
+        type: boolean
+        default: true
+      ignore-unfixed:
+        description: "Ignore vulnerabilities with no fix available"
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      vuln-count:
+        description: "Total vulnerability count"
+        value: ${{ jobs.trivy.outputs.vuln-count }}
+      critical-count:
+        description: "Critical vulnerability count"
+        value: ${{ jobs.trivy.outputs.critical-count }}
+    secrets:
+      AWS_ROLE_ARN:
+        required: true
 
 jobs:
+  trivy:
+    name: Trivy › ${{ inputs.service }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      security-events: write
+
+    outputs:
+      vuln-count:     ${{ steps.parse.outputs.vuln-count }}
+      critical-count: ${{ steps.parse.outputs.critical-count }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Login to Amazon ECR
+        uses: ./.github/actions/aws-ecr-login
+
+      # ── Vulnerability scan ─────────────────────────────────────────────────
+      - name: Trivy › Vulnerability scan (SARIF)
+        uses:  aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref:      ${{ inputs.image-uri }}
+          format:         sarif
+          output:         trivy-${{ inputs.service }}-vuln.sarif
+          severity:       ${{ inputs.severity }}
+          ignore-unfixed: ${{ inputs.ignore-unfixed }}
+          vuln-type:      os,library
+          scanners:       vuln,secret,misconfig
+
+      # ── Table output for human readability ────────────────────────────────
+      - name: Trivy › Table output
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref:      ${{ inputs.image-uri }}
+          format:         table
+          severity:       ${{ inputs.severity }}
+          ignore-unfixed: ${{ inputs.ignore-unfixed }}
+          vuln-type:      os,library
+          scanners:       vuln,secret,misconfig
+          exit-code:      ${{ inputs.fail-on-findings && '1' || '0' }}
+
+      # ── SBOM generation (CycloneDX) ────────────────────────────────────────
+      - name: Trivy › Generate SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ inputs.image-uri }}
+          format:    cyclonedx
+          output:    sbom-${{ inputs.service }}-cyclonedx.json
+          scanners:  ""
+
+      - name: Parse finding counts
+        id: parse
+        if: always()
+        run: |
+          TOTAL=$(cat trivy-${{ inputs.service }}-vuln.sarif \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); \
+              print(len(d.get('runs',[])[0].get('results',[])))" 2>/dev/null || echo "0")
+          CRITICAL=$(cat trivy-${{ inputs.service }}-vuln.sarif \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); \
+              results=d.get('runs',[])[0].get('results',[]); \
+              print(sum(1 for r in results if r.get('level') == 'error'))" 2>/dev/null || echo "0")
+          echo "vuln-count=${TOTAL}"       >> "$GITHUB_OUTPUT"
+          echo "critical-count=${CRITICAL}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-${{ inputs.service }}-vuln.sarif
+          category:   trivy-${{ inputs.service }}
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-${{ inputs.service }}-${{ github.run_id }}
+          path: |
+            trivy-${{ inputs.service }}-vuln.sarif
+            sbom-${{ inputs.service }}-cyclonedx.json
+          retention-days: 30
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### 🛡️ Container Scan — ${{ inputs.service }}"     >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field       | Value |"                           >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------------|-------|"                           >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image       | \`${{ inputs.image-uri }}\` |"    >> "$GITHUB_STEP_SUMMARY"
+          echo "| Severity    | \`${{ inputs.severity }}\` |"     >> "$GITHUB_STEP_SUMMARY"
+          echo "| Total Vulns | \`${{ steps.parse.outputs.vuln-count }}\` |"     >> "$GITHUB_STEP_SUMMARY"
+          echo "| Critical    | \`${{ steps.parse.outputs.critical-count }}\` |" >> "$GITHUB_STEP_SUMMARY"
