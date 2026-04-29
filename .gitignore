@@ -1,8 +1,70 @@
+# ── Node ──────────────────────────────────────────────────────────────────────
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.npm
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
 dist/
+build/
+out/
+.next/
+.nuxt/
+
+# ── Environment ───────────────────────────────────────────────────────────────
 .env
-.env.local
-*.log
+.env.*
+!.env.example
+!.env.test
+
+# ── Test & coverage ───────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+*.lcov
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*.suo
+.project
+.classpath
+
+# ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
-client/dist/
-server/dist/
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── Security scan outputs ─────────────────────────────────────────────────────
+*.sarif
+trivy-*.json
+semgrep-*.json
+gitleaks-report.*
+npm-audit-*.json
+sbom-*.json
+
+# ── Terraform ─────────────────────────────────────────────────────────────────
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+.cache/
+tmp/
+.tmp/
+*.local

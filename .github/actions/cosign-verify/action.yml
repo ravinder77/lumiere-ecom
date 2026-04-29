@@ -1,5 +1,6 @@
-name: cosign-verify
-author: ravinder
-description: cosign-verify
-runs:
-  using:
+name: Cosign Verify
+description: "Verify Cosign keyless signature on an ECR image"
+
+inputs:
+  image-ref:
+    description: "Full image URI with digest (uri@sha256:...)"

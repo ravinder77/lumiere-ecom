@@ -1,5 +1,17 @@
-name: aws-ecr-login
-author: ravinder
-description: aws-ecr-login
+name: AWS ECR Login
+description: "Authenticate to Amazon ECR and return registry URL"
+
+outputs:
+  registry:
+    description: "ECR registry URL (account.dkr.ecr.region.amazonaws.com)"
+    value: ${{steps.login.outputs.registry}}
+
 runs:
-  using:
+  using: composite
+
+  steps:
+    - name: Login to Amazon ECR
+      id: login
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        mask-password: true     # redact token from logs
