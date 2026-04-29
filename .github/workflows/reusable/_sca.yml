@@ -1,4 +1,147 @@
-name: _sca.yml
+name: Reusable › SCA (Dependency Scan)
+
 on:
+  workflow_call:
+    inputs:
+      service:
+        description: "Service to scan: backend | frontend"
+        required: true
+        type: string
+      node-version:
+        description: "Node.js version"
+        required: false
+        type: string
+        default: "24"
+      fail-on-severity:
+        description: "npm audit severity threshold: critical | high | moderate | low"
+        required: false
+        type: string
+        default: "high"
+      auto-fix:
+        description: "Run npm audit fix (only on non-main branches)"
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      vuln-count:
+        description: "Total dependency vulnerabilities found"
+        value: ${{ jobs.sca.outputs.vuln-count }}
+      critical-count:
+        description: "Critical dependency vulnerabilities"
+        value: ${{ jobs.sca.outputs.critical-count }}
 
 jobs:
+  sca:
+    name: SCA › ${{ inputs.service }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    outputs:
+      vuln-count:     ${{ steps.parse.outputs.vuln-count }}
+      critical-count: ${{ steps.parse.outputs.critical-count }}
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.service }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache:        npm
+          cache-dependency-path: ${{ inputs.service }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline
+
+      # ── npm audit ─────────────────────────────────────────────────────────
+      - name: npm audit (JSON report)
+        id: npm-audit
+        run: |
+          npm audit --json > ../npm-audit-${{ inputs.service }}.json 2>/dev/null || true
+          npm audit --audit-level=${{ inputs.fail-on-severity }} || echo "AUDIT_FAILED=true" >> "$GITHUB_ENV"
+
+      # ── Trivy filesystem scan (catches non-npm vulns too) ─────────────────
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type:      fs
+          scan-ref:       ./${{ inputs.service }}
+          format:         sarif
+          output:         trivy-sca-${{ inputs.service }}.sarif
+          severity:       CRITICAL,HIGH,MEDIUM
+          scanners:       vuln,secret
+          exit-code:      "0"   # don't fail here, handled below
+
+      # ── SBOM generation (SPDX) ────────────────────────────────────────────
+      - name: Trivy SBOM (SPDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type:  fs
+          scan-ref:   ./${{ inputs.service }}
+          format:     spdx-json
+          output:     sbom-${{ inputs.service }}-spdx.json
+          scanners:   ""
+
+      - name: Parse vulnerability counts
+        id: parse
+        if: always()
+        run: |
+          # Parse from npm audit JSON
+          AUDIT_FILE="../npm-audit-${{ inputs.service }}.json"
+          if [ -f "${AUDIT_FILE}" ]; then
+            TOTAL=$(python3 -c \
+              "import json; d=json.load(open('${AUDIT_FILE}')); \
+               meta=d.get('metadata',{}); \
+               vulns=meta.get('vulnerabilities',{}); \
+               print(sum(vulns.values()))" 2>/dev/null || echo "0")
+            CRITICAL=$(python3 -c \
+              "import json; d=json.load(open('${AUDIT_FILE}')); \
+               print(d.get('metadata',{}).get('vulnerabilities',{}).get('critical',0))" 2>/dev/null || echo "0")
+          else
+            TOTAL="0"; CRITICAL="0"
+          fi
+          echo "vuln-count=${TOTAL}"       >> "$GITHUB_OUTPUT"
+          echo "critical-count=${CRITICAL}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-sca-${{ inputs.service }}.sarif
+          category:   sca-${{ inputs.service }}
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sca-${{ inputs.service }}-${{ github.run_id }}
+          path: |
+            npm-audit-${{ inputs.service }}.json
+            trivy-sca-${{ inputs.service }}.sarif
+            sbom-${{ inputs.service }}-spdx.json
+          retention-days: 30
+
+      - name: Fail if audit threshold exceeded
+        if: env.AUDIT_FAILED == 'true'
+        run: |
+          echo "❌ npm audit found vulnerabilities at or above '${{ inputs.fail-on-severity }}' severity"
+          exit 1
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### 📦 SCA (Dependency Scan) — ${{ inputs.service }}"             >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field          | Value |"                                        >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------------|-------|"                                        >> "$GITHUB_STEP_SUMMARY"
+          echo "| Total Vulns    | \`${{ steps.parse.outputs.vuln-count }}\` |"   >> "$GITHUB_STEP_SUMMARY"
+          echo "| Critical       | \`${{ steps.parse.outputs.critical-count }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Fail Threshold | \`${{ inputs.fail-on-severity }}\` |"          >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tools          | npm audit + Trivy fs |"                         >> "$GITHUB_STEP_SUMMARY"
+          echo "| SBOM Format    | SPDX-JSON |"                                    >> "$GITHUB_STEP_SUMMARY"

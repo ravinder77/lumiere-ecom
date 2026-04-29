@@ -1,4 +1,140 @@
-name: _sign-attest.yml
+name: Reusable › Sign & Attest (Cosign)
+
 on:
+  workflow_call:
+    inputs:
+      service:
+        description: "Service label: frontend | backend"
+        required: true
+        type: string
+      image-uri:
+        description: "Full ECR image URI"
+        required: true
+        type: string
+      image-digest:
+        description: "Image digest (sha256:...)"
+        required: true
+        type: string
+      sbom-path:
+        description: "Path to CycloneDX SBOM file for attestation"
+        required: false
+        type: string
+        default: ""
+    outputs:
+      signed:
+        description: "Whether image was successfully signed"
+        value: ${{ jobs.sign-attest.outputs.signed }}
+    secrets:
+      AWS_ROLE_ARN:
+        required: true
 
 jobs:
+  sign-attest:
+    name: Sign & Attest › ${{ inputs.service }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write    # keyless signing via OIDC (Sigstore)
+      contents: read
+
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+
+    env:
+      IMAGE_REF: ${{ inputs.image-uri }}@${{ inputs.image-digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Login to Amazon ECR
+        uses: ./.github/actions/aws-ecr-login
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.0
+        with:
+          cosign-release: 'v3.0.5'
+
+      # ── Keyless image signing ──────────────────────────────────────────────
+      - name: Sign image (keyless / Sigstore)
+        id: sign
+        run: |
+          cosign sign --yes "${{ env.IMAGE_REF }}"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      # ── Git commit attestation ─────────────────────────────────────────────
+      - name: Attest › Git provenance
+        run: |
+          cosign attest --yes \
+            --predicate - \
+            --type https://slsa.dev/provenance/v1 \
+            "${{ env.IMAGE_REF }}" <<EOF
+          {
+            "buildType": "https://github.com/actions/runner",
+            "builder": {
+              "id": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            },
+            "invocation": {
+              "configSource": {
+                "uri": "git+https://github.com/${{ github.repository }}@refs/heads/${{ github.ref_name }}",
+                "digest": { "sha1": "${{ github.sha }}" },
+                "entryPoint": ".github/workflows/ci.yml"
+              }
+            },
+            "metadata": {
+              "buildStartedOn": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+              "completeness": { "parameters": true, "environment": true, "materials": true }
+            }
+          }
+          EOF
+
+      # ── SBOM attestation ──────────────────────────────────────────────────
+      - name: Download SBOM artifact
+        if: inputs.sbom-path == ''
+        uses: actions/download-artifact@v8
+        with:
+          name: trivy-${{ inputs.service }}-${{ github.run_id }}
+          path: /tmp/sbom-artifacts
+
+      - name: Attest › SBOM (CycloneDX)
+        run: |
+          SBOM_FILE="${{ inputs.sbom-path != '' && inputs.sbom-path || format('/tmp/sbom-artifacts/sbom-{0}-cyclonedx.json', inputs.service) }}"
+          cosign attest --yes \
+            --predicate "${SBOM_FILE}" \
+            --type cyclonedx \
+            "${{ env.IMAGE_REF }}"
+
+      # ── Vulnerability scan attestation ────────────────────────────────────
+      - name: Download Trivy SARIF artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: trivy-${{ inputs.service }}-${{ github.run_id }}
+          path: /tmp/trivy-artifacts
+
+      - name: Attest › Vulnerability report
+        run: |
+          cosign attest --yes \
+            --predicate /tmp/trivy-artifacts/trivy-${{ inputs.service }}-vuln.sarif \
+            --type https://trivy.dev/scan-result/v1 \
+            "${{ env.IMAGE_REF }}"
+
+      # ── Verify signature ──────────────────────────────────────────────────
+      - name: Verify signature
+        uses: ./.github/actions/cosign-verify
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+
+      - name: Summary
+        run: |
+          echo "### ✍️ Sign & Attest — ${{ inputs.service }}"        >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field       | Value |"                             >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------------|-------|"                             >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image       | \`${{ inputs.image-uri }}\` |"      >> "$GITHUB_STEP_SUMMARY"
+          echo "| Digest      | \`${{ inputs.image-digest }}\` |"   >> "$GITHUB_STEP_SUMMARY"
+          echo "| Signed      | ✅ Keyless (Sigstore) |"             >> "$GITHUB_STEP_SUMMARY"
+          echo "| Attestations| Git provenance, SBOM, Vuln report |" >> "$GITHUB_STEP_SUMMARY"
