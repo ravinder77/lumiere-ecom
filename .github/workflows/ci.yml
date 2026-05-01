@@ -4,8 +4,8 @@ on:
   push:
     branches: [main, develop]
     paths:
-      - "client/**"
-      - "server/**"
+      - "frontend/**"
+      - "backend/**"
       - ".github/workflows/**"
       - ".github/actions/**"
   pull_request:
@@ -25,7 +25,6 @@ env:
 
 # ─── Required secrets ────────────────────────────────────────────────────────
 # AWS_ROLE_ARN          – OIDC role for ECR push + image pull
-# GITOPS_TOKEN          – PAT with write access to lumiere-gitops
 # SEMGREP_APP_TOKEN     – Semgrep Cloud (optional)
 # SONAR_TOKEN           – SonarQube token (optional)
 # SONAR_HOST_URL        – SonarQube host URL (optional)
@@ -43,20 +42,20 @@ jobs:
       pull-requests: read
     outputs:
       services: ${{ steps.filter.outputs.changes }}
-      client:   ${{ steps.filter.outputs.client }}
-      server:   ${{ steps.filter.outputs.server }}
+      frontend:   ${{ steps.filter.outputs.frontend }}
+      backend:   ${{ steps.filter.outputs.backend }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
           filters: |
-            client:
-              - 'client/**'
+            frontend:
+              - 'frontend/**'
               - '.github/workflows/**'
               - '.github/actions/**'
-            server:
-              - 'server/**'
+            backend:
+              - 'backend/**'
               - '.github/workflows/**'
               - '.github/actions/**'
 
@@ -78,7 +77,7 @@ jobs:
   sast:
     name: SAST
     needs: [changes, secrets-detect]
-    if: needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true'
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -99,15 +98,15 @@ jobs:
   build:
     name: Build & Push
     needs: [changes, sast]
-    if: needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true'
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - service: client
-            enabled: ${{ needs.changes.outputs.client == 'true' }}
-          - service: server
-            enabled: ${{ needs.changes.outputs.server == 'true' }}
+          - service: frontend
+            enabled: ${{ needs.changes.outputs.frontend == 'true' }}
+          - service: backend
+            enabled: ${{ needs.changes.outputs.backend == 'true' }}
     uses: ./.github/workflows/reusable/_build.yml
     with:
       service:   ${{ matrix.service }}
@@ -124,7 +123,7 @@ jobs:
     needs: [changes, build]
     if: |
       github.event_name != 'pull_request' &&
-      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+      (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true')
     strategy:
       fail-fast: false
       matrix:
@@ -148,7 +147,7 @@ jobs:
     if: |
       github.event_name != 'pull_request' &&
       github.ref == 'refs/heads/main' &&
-      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+      (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true')
     strategy:
       fail-fast: false
       matrix:
@@ -162,7 +161,7 @@ jobs:
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # 6 ▸ Deploy to dev — matrix: client + server
+  # 6 ▸ Deploy to dev — matrix: frontend + backend
   # ═══════════════════════════════════════════════════════════════════════════
   deploy-dev:
     name: Deploy › dev
@@ -170,7 +169,7 @@ jobs:
     if: |
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+      (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true')
     strategy:
       fail-fast: false
       matrix:

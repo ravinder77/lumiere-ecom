@@ -10,5 +10,3 @@ RUN npm ci
 COPY . .
 
 CMD ["npm", "start"]
-
-ENTRYPOINT ["top", "-b"]

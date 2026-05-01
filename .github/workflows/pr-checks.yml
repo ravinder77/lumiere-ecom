@@ -40,8 +40,8 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      client: ${{ steps.filter.outputs.client }}
-      server: ${{ steps.filter.outputs.server }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
       services: ${{ steps.filter.outputs.changes }}
       workflows: ${{ steps.filter.outputs.workflows }}
     steps:
@@ -50,10 +50,10 @@ jobs:
         id: filter
         with:
           filters: |
-            client:
-              - 'client/**'
-            server:
-              - 'server/**'
+            frontend:
+              - 'frontend/**'
+            backend:
+              - 'backend/**'
             workflows:
               - '.github/**'
 
@@ -102,7 +102,7 @@ jobs:
     needs: [guard, changes]
     if: |
       needs.guard.outputs.skip != 'true' &&
-      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+      (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -135,7 +135,7 @@ jobs:
     needs: [guard, changes, lint]
     if: |
       needs.guard.outputs.skip != 'true' &&
-      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+      (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -172,7 +172,7 @@ jobs:
     needs: [guard, changes, secrets-detect]
     if: |
       needs.guard.outputs.skip != 'true' &&
-      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+      (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true')
     strategy:
       fail-fast: false
       matrix:
@@ -195,7 +195,7 @@ jobs:
     needs: [guard, changes]
     if: |
       needs.guard.outputs.skip != 'true' &&
-      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+      (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true')
     strategy:
       fail-fast: false
       matrix:
@@ -229,7 +229,7 @@ jobs:
     needs: [guard, changes, lint, test]
     if: |
       needs.guard.outputs.skip != 'true' &&
-      (needs.changes.outputs.client == 'true' || needs.changes.outputs.server == 'true')
+      (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true')
     strategy:
       fail-fast: false
       matrix:

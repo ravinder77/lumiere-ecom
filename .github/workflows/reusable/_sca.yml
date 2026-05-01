@@ -137,11 +137,11 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "### 📦 SCA (Dependency Scan) — ${{ inputs.service }}"             >> "$GITHUB_STEP_SUMMARY"
-          echo "| Field          | Value |"                                        >> "$GITHUB_STEP_SUMMARY"
-          echo "|----------------|-------|"                                        >> "$GITHUB_STEP_SUMMARY"
-          echo "| Total Vulns    | \`${{ steps.parse.outputs.vuln-count }}\` |"   >> "$GITHUB_STEP_SUMMARY"
+          echo "### SCA (Dependency Scan) — ${{ inputs.service }}"                  >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field          | Value |"                                         >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------------|-------|"                                         >> "$GITHUB_STEP_SUMMARY"
+          echo "| Total Vulns    | \`${{ steps.parse.outputs.vuln-count }}\` |"     >> "$GITHUB_STEP_SUMMARY"
           echo "| Critical       | \`${{ steps.parse.outputs.critical-count }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Fail Threshold | \`${{ inputs.fail-on-severity }}\` |"          >> "$GITHUB_STEP_SUMMARY"
-          echo "| Tools          | npm audit + Trivy fs |"                         >> "$GITHUB_STEP_SUMMARY"
-          echo "| SBOM Format    | SPDX-JSON |"                                    >> "$GITHUB_STEP_SUMMARY"
+          echo "| Fail Threshold | \`${{ inputs.fail-on-severity }}\` |"            >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tools          | npm audit + Trivy fs |"                          >> "$GITHUB_STEP_SUMMARY"
+          echo "| SBOM Format    | SPDX-JSON |"                                     >> "$GITHUB_STEP_SUMMARY"
