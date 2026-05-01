@@ -123,9 +123,21 @@ jobs:
       - name: Install
         run: npm ci --prefer-offline
       - name: ESLint
-        run: npm run lint -- --format=github
+        run: |
+          if npm pkg get scripts.lint | grep -qv '^{}$'; then
+            npm run lint -- --format=github
+          else
+            echo "No lint script for ${{ matrix.service }}; skipping."
+          fi
       - name: Type check
-        run: npm run typecheck || true   # optional — remove '|| true' once TS is strict
+        run: |
+          if npm pkg get scripts.typecheck | grep -qv '^{}$'; then
+            npm run typecheck
+          elif npm pkg get scripts.build | grep -qv '^{}$'; then
+            npm run build
+          else
+            echo "No typecheck or build script for ${{ matrix.service }}; skipping."
+          fi
 
   # ═══════════════════════════════════════════════════════════════════════════
   # 4 ▸ Unit tests — matrix: client + server
@@ -156,12 +168,18 @@ jobs:
       - name: Install
         run: npm ci --prefer-offline
       - name: Run tests with coverage
-        run: npm test -- --coverage --ci
+        run: |
+          if npm pkg get scripts.test | grep -qv '^{}$'; then
+            npm test -- --coverage --ci
+          else
+            echo "No test script for ${{ matrix.service }}; skipping."
+          fi
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.service }}-${{ github.run_id }}
           path: ${{ matrix.service }}/coverage/
+          if-no-files-found: ignore
           retention-days: 7
 
   # ═══════════════════════════════════════════════════════════════════════════
@@ -218,7 +236,7 @@ jobs:
     uses: ./.github/workflows/reusable/_iac-scan.yml
     with:
       scan-path:          "."
-      checkov-frameworks: "dockerfile,github_actions,secrets"
+      framework:          "dockerfile,github_actions,secrets"
       soft-fail:          false
 
   # ═══════════════════════════════════════════════════════════════════════════
@@ -248,7 +266,7 @@ jobs:
   pr-gate:
     name: ✅ PR Gate
     runs-on: ubuntu-latest
-    needs: [pr-title, secrets-detect, lint, test, sast, sca, build-check]
+    needs: [pr-title, secrets-detect, lint, test, sast, sca, iac-scan, build-check]
     if: always()
     steps:
       - name: Evaluate all checks

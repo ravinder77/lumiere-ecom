@@ -48,6 +48,9 @@ jobs:
     permissions:
       contents: none
 
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
     steps:
       - name: Resolve metadata
         id: meta
@@ -75,10 +78,10 @@ jobs:
 
       # ── Slack notification ─────────────────────────────────────────────────
       - name: Slack notification
-        if: secrets.SLACK_WEBHOOK_URL != ''
+        if: env.SLACK_WEBHOOK_URL != ''
         uses: slackapi/slack-github-action@v1.26.0
         env:
-          SLACK_WEBHOOK_URL:  ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL:  ${{ env.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
         with:
           payload: |
@@ -100,7 +103,7 @@ jobs:
                         { "type": "mrkdwn", "text": "*Service:*\n`${{ inputs.service }}`" },
                         { "type": "mrkdwn", "text": "*Environment:*\n`${{ inputs.environment }}`" },
                         { "type": "mrkdwn", "text": "*Branch:*\n`${{ github.ref_name }}`" },
-                        { "type": "mrkdwn", "text": "*Commit:*\n`${{ steps.meta.outputs.short-sha }}`" },
+                        { "type": "mrkdwn", "text": "*Commit:*\n`${{ steps.meta.outputs['short-sha'] }}`" },
                         { "type": "mrkdwn", "text": "*Triggered by:*\n`${{ github.actor }}`" },
                         { "type": "mrkdwn", "text": "*Image Tag:*\n`${{ inputs.image-tag != '' && inputs.image-tag || 'N/A' }}`" }
                       ]
@@ -111,7 +114,7 @@ jobs:
                         {
                           "type": "button",
                           "text": { "type": "plain_text", "text": "View Pipeline" },
-                          "url": "${{ steps.meta.outputs.run-url }}"
+                          "url": "${{ steps.meta.outputs['run-url'] }}"
                         },
                         {
                           "type": "button",
@@ -131,4 +134,4 @@ jobs:
           echo "### 🔔 Notification Sent"                              >> "$GITHUB_STEP_SUMMARY"
           echo "| Channel | Sent |"                                    >> "$GITHUB_STEP_SUMMARY"
           echo "|---------|------|"                                    >> "$GITHUB_STEP_SUMMARY"
-          echo "| Slack   | ${{ secrets.SLACK_WEBHOOK_URL != '' && '✅' || '⏭️ skipped (no secret)' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Slack   | ${{ env.SLACK_WEBHOOK_URL != '' && '✅' || '⏭️ skipped (no secret)' }} |" >> "$GITHUB_STEP_SUMMARY"

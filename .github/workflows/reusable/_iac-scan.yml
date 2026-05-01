@@ -9,7 +9,7 @@ on:
         type: string
         default: "."
       framework:
-        description: "Checkov framework: terraform | kubernetes | dockerfile | all"
+        description: "Checkov framework: terraform | kubernetes | dockerfile | github_actions | secrets | all"
         required: false
         type: string
         default: "all"
@@ -26,7 +26,7 @@ on:
     outputs:
       failed-count:
         description: "Number of failed Checkov checks"
-        value: ${{ jobs.checkov.outputs.failed-count }}
+        value: ${{ jobs.checkov.outputs['failed-count'] }}
 
 jobs:
   # ─── Checkov ──────────────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ jobs:
       security-events: write
 
     outputs:
-      failed-count: ${{ steps.parse.outputs.failed-count }}
+      failed-count: ${{ steps.parse.outputs['failed-count'] }}
 
     steps:
       - name: Checkout
@@ -88,6 +88,7 @@ jobs:
   tflint:
     name: tflint › Terraform lint
     runs-on: ubuntu-latest
+    needs: checkov
     if: inputs.framework == 'terraform' || inputs.framework == 'all'
     permissions:
       contents: read
@@ -126,7 +127,7 @@ jobs:
           echo "### IaC Scan"                                       >> "$GITHUB_STEP_SUMMARY"
           echo "| Tool      | Result |"                                >> "$GITHUB_STEP_SUMMARY"
           echo "|-----------|--------|"                                >> "$GITHUB_STEP_SUMMARY"
-          echo "| Checkov   | \`${{ jobs.checkov.outputs.failed-count }}\` failed checks |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Checkov   | \`${{ needs.checkov.outputs['failed-count'] }}\` failed checks |" >> "$GITHUB_STEP_SUMMARY"
           echo "| tflint    | See job logs |"                          >> "$GITHUB_STEP_SUMMARY"
           echo "| Framework | \`${{ inputs.framework }}\` |"          >> "$GITHUB_STEP_SUMMARY"
           echo "| Path      | \`${{ inputs.scan-path }}\` |"          >> "$GITHUB_STEP_SUMMARY"

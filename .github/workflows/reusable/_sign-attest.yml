@@ -23,7 +23,7 @@ on:
     outputs:
       signed:
         description: "Whether image was successfully signed"
-        value: ${{ jobs.sign-attest.outputs.signed }}
+        value: ${{ jobs['sign-attest'].outputs.signed }}
     secrets:
       AWS_ROLE_ARN:
         required: true

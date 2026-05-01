@@ -1,4 +1,11 @@
-name: destroy.yml
+name: Destroy
+
 on:
+  workflow_dispatch:
 
 jobs:
+  noop:
+    name: Destroy placeholder
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Destroy workflow is not implemented yet."

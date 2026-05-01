@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       service:
-        description: "Service to deploy: client | server"
+        description: "Service to deploy: frontend | backend"
         required: true
         type: string
       image-tag:
@@ -38,7 +38,7 @@ on:
     outputs:
       pr-url:
         description: "GitOps PR URL (prod) or commit URL (dev/staging)"
-        value: ${{ jobs.deploy.outputs.pr-url }}
+        value: ${{ jobs.deploy.outputs['pr-url'] }}
     secrets:
       GITOPS_TOKEN:
         required: true   # PAT with repo write access to lumiere-gitops
@@ -52,7 +52,7 @@ jobs:
       contents: read
 
     outputs:
-      pr-url: ${{ steps.update.outputs.pr-url }}
+      pr-url: ${{ steps.commit.outputs['pr-url'] || steps.pr.outputs['pr-url'] }}
 
     steps:
       - name: Checkout GitOps repo
@@ -83,7 +83,7 @@ jobs:
         id: update
         working-directory: gitops
         run: |
-          VALUES_FILE="${{ steps.resolve.outputs.values-path }}"
+          VALUES_FILE="${{ steps.resolve.outputs['values-path'] }}"
 
           if [ ! -f "${VALUES_FILE}" ]; then
             echo "❌ Values file not found: ${VALUES_FILE}"
@@ -104,6 +104,7 @@ jobs:
           git config user.email "ci-bot@lumiere.internal"
 
       - name: Commit and push (dev / staging)
+        id: commit
         if: inputs.environment != 'prod'
         working-directory: gitops
         run: |
@@ -162,4 +163,4 @@ jobs:
           echo "| Environment | \`${{ inputs.environment }}\` |"     >> "$GITHUB_STEP_SUMMARY"
           echo "| Image Tag   | \`${{ inputs.image-tag }}\` |"       >> "$GITHUB_STEP_SUMMARY"
           echo "| GitOps Repo | \`${{ inputs.gitops-repo }}\` |"     >> "$GITHUB_STEP_SUMMARY"
-          echo "| Link        | ${{ steps.update.outputs.pr-url }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Link        | ${{ steps.commit.outputs['pr-url'] || steps.pr.outputs['pr-url'] }} |" >> "$GITHUB_STEP_SUMMARY"

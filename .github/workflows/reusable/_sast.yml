@@ -28,7 +28,7 @@ on:
         value: ${{ jobs.semgrep.outputs.findings }}
       sonar-status:
         description: "SonarQube Quality Gate status"
-        value: ${{ jobs.sonarqube.outputs.gate-status }}
+        value: ${{ jobs.sonarqube.outputs['gate-status'] }}
     secrets:
       SEMGREP_APP_TOKEN:
         required: false
@@ -109,25 +109,31 @@ jobs:
   sonarqube:
     name: SonarQube › ${{ inputs.service }}
     runs-on: ubuntu-latest
-    if: ${{ secrets.SONAR_TOKEN != '' }}
+    needs: semgrep
 
     permissions:
       contents: read
 
     outputs:
-      gate-status: ${{ steps.gate.outputs.status }}
+      gate-status: ${{ steps.quality-gate.outputs.status }}
+
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
     steps:
       - name: Checkout
+        if: env.SONAR_TOKEN != ''
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: SonarQube Scan
+        if: env.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-scan-action@v6
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
         with:
           projectBaseDir: ./${{ inputs.service }}
           args: >
@@ -142,10 +148,11 @@ jobs:
           
 
       - name: SonarQube Quality Gate check
+        if: env.SONAR_TOKEN != ''
         id: quality-gate
         uses: SonarSource/sonarqube-quality-gate-action@master
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
         with:
           pollingTimeoutSec: 300
 
@@ -156,8 +163,5 @@ jobs:
           echo "| Tool       | Result |"                                                          >> "$GITHUB_STEP_SUMMARY"
           echo "|------------|--------|"                                                          >> "$GITHUB_STEP_SUMMARY"
           echo "| Semgrep    | \`${{ needs.semgrep.outputs.findings || 'skipped' }}\` findings |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| SonarQube  | Quality Gate: \`${{ steps.quality-gate.outputs.status }}\` |"              >> "$GITHUB_STEP_SUMMARY"
-
-
-
+          echo "| SonarQube  | Quality Gate: \`${{ steps.quality-gate.outputs.status || 'skipped' }}\` |"  >> "$GITHUB_STEP_SUMMARY"
 

@@ -22,13 +22,18 @@ on:
         required: false
         type: boolean
         default: false
+      generate-sbom:
+        description: "Generate and upload an SPDX SBOM"
+        required: false
+        type: boolean
+        default: true
     outputs:
       vuln-count:
         description: "Total dependency vulnerabilities found"
-        value: ${{ jobs.sca.outputs.vuln-count }}
+        value: ${{ jobs.sca.outputs['vuln-count'] }}
       critical-count:
         description: "Critical dependency vulnerabilities"
-        value: ${{ jobs.sca.outputs.critical-count }}
+        value: ${{ jobs.sca.outputs['critical-count'] }}
 
 jobs:
   sca:
@@ -39,8 +44,8 @@ jobs:
       security-events: write
 
     outputs:
-      vuln-count:     ${{ steps.parse.outputs.vuln-count }}
-      critical-count: ${{ steps.parse.outputs.critical-count }}
+      vuln-count:     ${{ steps.parse.outputs['vuln-count'] }}
+      critical-count: ${{ steps.parse.outputs['critical-count'] }}
 
     defaults:
       run:
@@ -80,14 +85,14 @@ jobs:
           exit-code:      "0"   # don't fail here, handled below
 
       # ── SBOM generation (SPDX) ────────────────────────────────────────────
-      - name: Trivy SBOM (SPDX)
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Syft SBOM (SPDX)
+        if: inputs.generate-sbom
+        uses: anchore/sbom-action@v0.24.0
         with:
-          scan-type:  fs
-          scan-ref:   ./${{ inputs.service }}
-          format:     spdx-json
-          output:     sbom-${{ inputs.service }}-spdx.json
-          scanners:   ""
+          path: ./${{ inputs.service }}
+          format: spdx-json
+          output-file: sbom-${{ inputs.service }}-spdx.json
+          upload-artifact: false
 
       - name: Parse vulnerability counts
         id: parse
@@ -122,6 +127,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sca-${{ inputs.service }}-${{ github.run_id }}
+          if-no-files-found: warn
           path: |
             npm-audit-${{ inputs.service }}.json
             trivy-sca-${{ inputs.service }}.sarif
@@ -140,8 +146,8 @@ jobs:
           echo "### SCA (Dependency Scan) — ${{ inputs.service }}"                  >> "$GITHUB_STEP_SUMMARY"
           echo "| Field          | Value |"                                         >> "$GITHUB_STEP_SUMMARY"
           echo "|----------------|-------|"                                         >> "$GITHUB_STEP_SUMMARY"
-          echo "| Total Vulns    | \`${{ steps.parse.outputs.vuln-count }}\` |"     >> "$GITHUB_STEP_SUMMARY"
-          echo "| Critical       | \`${{ steps.parse.outputs.critical-count }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Total Vulns    | \`${{ steps.parse.outputs['vuln-count'] }}\` |"     >> "$GITHUB_STEP_SUMMARY"
+          echo "| Critical       | \`${{ steps.parse.outputs['critical-count'] }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Fail Threshold | \`${{ inputs.fail-on-severity }}\` |"            >> "$GITHUB_STEP_SUMMARY"
-          echo "| Tools          | npm audit + Trivy fs |"                          >> "$GITHUB_STEP_SUMMARY"
-          echo "| SBOM Format    | SPDX-JSON |"                                     >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tools          | npm audit + Trivy fs + Syft SBOM |"              >> "$GITHUB_STEP_SUMMARY"
+          echo "| SBOM Format    | SPDX-JSON via Syft |"                            >> "$GITHUB_STEP_SUMMARY"

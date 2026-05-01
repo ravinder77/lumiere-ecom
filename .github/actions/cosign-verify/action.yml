@@ -4,3 +4,15 @@ description: "Verify Cosign keyless signature on an ECR image"
 inputs:
   image-ref:
     description: "Full image URI with digest (uri@sha256:...)"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Verify keyless signature
+      shell: bash
+      run: |
+        cosign verify \
+          --certificate-identity-regexp "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/.*@refs/heads/${GITHUB_REF_NAME}" \
+          --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+          "${{ inputs.image-ref }}"

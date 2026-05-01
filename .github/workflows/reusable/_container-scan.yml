@@ -29,10 +29,10 @@ on:
     outputs:
       vuln-count:
         description: "Total vulnerability count"
-        value: ${{ jobs.trivy.outputs.vuln-count }}
+        value: ${{ jobs.trivy.outputs['vuln-count'] }}
       critical-count:
         description: "Critical vulnerability count"
-        value: ${{ jobs.trivy.outputs.critical-count }}
+        value: ${{ jobs.trivy.outputs['critical-count'] }}
     secrets:
       AWS_ROLE_ARN:
         required: true
@@ -47,8 +47,8 @@ jobs:
       security-events: write
 
     outputs:
-      vuln-count:     ${{ steps.parse.outputs.vuln-count }}
-      critical-count: ${{ steps.parse.outputs.critical-count }}
+      vuln-count:     ${{ steps.parse.outputs['vuln-count'] }}
+      critical-count: ${{ steps.parse.outputs['critical-count'] }}
 
     steps:
       - name: Checkout
@@ -88,13 +88,13 @@ jobs:
           exit-code:      ${{ inputs.fail-on-findings && '1' || '0' }}
 
       # ── SBOM generation (CycloneDX) ────────────────────────────────────────
-      - name: Trivy › Generate SBOM (CycloneDX)
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Syft › Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0.24.0
         with:
-          image-ref: ${{ inputs.image-uri }}
-          format:    cyclonedx
-          output:    sbom-${{ inputs.service }}-cyclonedx.json
-          scanners:  ""
+          image: ${{ inputs.image-uri }}
+          format: cyclonedx-json
+          output-file: sbom-${{ inputs.service }}-cyclonedx.json
+          upload-artifact: false
 
       - name: Parse finding counts
         id: parse
@@ -135,5 +135,6 @@ jobs:
           echo "|-------------|-------|"                           >> "$GITHUB_STEP_SUMMARY"
           echo "| Image       | \`${{ inputs.image-uri }}\` |"    >> "$GITHUB_STEP_SUMMARY"
           echo "| Severity    | \`${{ inputs.severity }}\` |"     >> "$GITHUB_STEP_SUMMARY"
-          echo "| Total Vulns | \`${{ steps.parse.outputs.vuln-count }}\` |"     >> "$GITHUB_STEP_SUMMARY"
-          echo "| Critical    | \`${{ steps.parse.outputs.critical-count }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Total Vulns | \`${{ steps.parse.outputs['vuln-count'] }}\` |"     >> "$GITHUB_STEP_SUMMARY"
+          echo "| Critical    | \`${{ steps.parse.outputs['critical-count'] }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| SBOM        | Syft CycloneDX JSON |"             >> "$GITHUB_STEP_SUMMARY"

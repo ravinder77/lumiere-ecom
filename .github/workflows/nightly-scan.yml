@@ -30,7 +30,7 @@ jobs:
     name: Container Scan › backend
     uses: ./.github/workflows/reusable/_container-scan.yml
     with:
-      service:          server
+      service:          backend
       image-uri:        ${{ vars.ECR_REGISTRY }}/lumiere-backend:latest
       severity:         CRITICAL,HIGH,MEDIUM
       fail-on-findings: false
@@ -66,7 +66,7 @@ jobs:
     uses: ./.github/workflows/reusable/_iac-scan.yml
     with:
       scan-path:          "."
-      checkov-frameworks: "dockerfile,kubernetes,github_actions,secrets"
+      framework:          "dockerfile,kubernetes,github_actions,secrets"
       soft-fail:          true
 
   notify:
@@ -89,12 +89,12 @@ jobs:
         }}
       service:       "nightly-scan"
       environment:   "prod"
-      extra-message: >-
-        Container scan: client=${{ needs.container-scan-frontend.result }},
-        server=${{ needs.container-scan-backend.result }} |
-        SCA: client=${{ needs.sca-frontend.result }},
-        server=${{ needs.sca-backend.result }} |
-        Secrets: ${{ needs.secrets-detect.result }} |
-        IaC: ${{ needs.iac-scan.result }}
+      custom-message: >-
+        Container scan: client=${{ needs['container-scan-frontend'].result }},
+        server=${{ needs['container-scan-backend'].result }} |
+        SCA: client=${{ needs['sca-frontend'].result }},
+        server=${{ needs['sca-backend'].result }} |
+        Secrets: ${{ needs['secrets-detect'].result }} |
+        IaC: ${{ needs['iac-scan'].result }}
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
