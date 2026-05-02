@@ -125,9 +125,6 @@ jobs:
         id: ecr-login
         uses: ./.github/actions/aws-ecr-login
 
-      #--- 4. Ensure repository exists ---------
-
-
 
       #--- 5. Prepare image URI -------------
       - name: Set Image Metadata

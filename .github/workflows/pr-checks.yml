@@ -167,10 +167,10 @@ jobs:
           cache-dependency-path: ${{ matrix.service }}/package-lock.json
       - name: Install
         run: npm ci --prefer-offline
-      - name: Run tests with coverage
+      - name: Run tests
         run: |
           if npm pkg get scripts.test | grep -qv '^{}$'; then
-            npm test -- --coverage --ci
+            npm test
           else
             echo "No test script for ${{ matrix.service }}; skipping."
           fi

@@ -23,8 +23,12 @@ class HttpError extends Error {
 
 let refreshPromise: Promise<string> | null = null;
 
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/+$/, '');
+
 function buildUrl(path: string, params?: object): string {
-  const url = new URL(`/api${path}`, window.location.origin);
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const resolvedBaseUrl = new URL(apiBaseUrl || '/api', window.location.origin).toString().replace(/\/+$/, '');
+  const url = new URL(`${resolvedBaseUrl}${normalizedPath}`);
 
   Object.entries(params ?? {}).forEach(([key, value]) => {
     const queryValue = value as QueryValue;
@@ -32,7 +36,7 @@ function buildUrl(path: string, params?: object): string {
     url.searchParams.set(key, String(queryValue));
   });
 
-  return `${url.pathname}${url.search}`;
+  return url.origin === window.location.origin ? `${url.pathname}${url.search}` : url.toString();
 }
 
 async function parseResponse(response: Response): Promise<unknown> {

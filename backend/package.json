@@ -1,15 +1,16 @@
 {
-  "name": "ecommerce-server",
+  "name": "lumiere-backend",
   "version": "1.0.0",
   "private": true,
   "prisma": {
     "schema": "prisma/schema.prisma"
   },
-  "main": "dist/index.js",
+  "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc --noEmit && tsx --test \"src/**/*.test.ts\"",
+    "start": "node dist/server.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
