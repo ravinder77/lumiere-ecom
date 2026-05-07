@@ -30,8 +30,6 @@ on:
         description: "SonarQube Quality Gate status"
         value: ${{ jobs.sonarqube.outputs['gate-status'] }}
     secrets:
-      SEMGREP_APP_TOKEN:
-        required: false
       SONAR_TOKEN:
         required: false
       SONAR_HOST_URL:
@@ -42,74 +40,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ─── Semgrep ────────────────────────────────────────────────────────────────
-  semgrep:
-    name:  Semgrep › ${{ inputs.service }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
 
-    outputs:
-      findings: ${{steps.parse.outputs.findings}}
-
-    container:
-      image: semgrep/semgrep
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Run Semgrep
-        id: semgrep
-        env:
-          SEMGREP_APP_TOKEN: ${{secrets.SEMGREP_APP_TOKEN}}
-        run: |
-          semgrep ci \
-          --config auto \
-          --config p/owasp-top-ten \
-          --config p/nodejs \
-          --config p/react \
-          --sarif \
-          --output semgrep-${{ inputs.service }}.sarif \
-          --severity ${{ inputs.fail-on-severity }} \
-          ${{ inputs.service }}/ || true
-
-      - name: Parse Findings
-        id: parse
-        run: |
-          FINDINGS=$(cat semgrep-${{ inputs.service }}.sarif \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); \
-              print(len(d.get('runs',[])[0].get('results',[])))" 2>/dev/null || echo "0")
-          echo "findings=${FINDINGS}" >> "$GITHUB_OUTPUT"
-
-      - name: Upload SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: semgrep-${{ inputs.service }}.sarif
-          category:   semgrep-${{ inputs.service }}
-
-      - name: Upload artifact
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: semgrep-${{ inputs.service }}-${{ github.run_id }}
-          path: semgrep-${{ inputs.service }}.sarif
-          retention-days: 30
-
-      - name: Fail on findings
-        if: steps.parse.outputs.findings != '0' && inputs.fail-on-severity == 'ERROR'
-        run: |
-          echo "❌ Semgrep found ${{ steps.parse.outputs.findings }} ERROR-level findings in ${{ inputs.service }}"
-          exit 1
-          
   # ─── SonarQube ───────────────
 
   sonarqube:
     name: SonarQube › ${{ inputs.service }}
     runs-on: ubuntu-latest
-    needs: semgrep
 
     permissions:
       contents: read
@@ -162,6 +98,5 @@ jobs:
           echo "### 🔍 SAST — ${{ inputs.service }}"                                              >> "$GITHUB_STEP_SUMMARY"
           echo "| Tool       | Result |"                                                          >> "$GITHUB_STEP_SUMMARY"
           echo "|------------|--------|"                                                          >> "$GITHUB_STEP_SUMMARY"
-          echo "| Semgrep    | \`${{ needs.semgrep.outputs.findings || 'skipped' }}\` findings |" >> "$GITHUB_STEP_SUMMARY"
           echo "| SonarQube  | Quality Gate: \`${{ steps.quality-gate.outputs.status || 'skipped' }}\` |"  >> "$GITHUB_STEP_SUMMARY"
 

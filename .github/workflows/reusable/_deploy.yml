@@ -1,4 +1,4 @@
-name: Reusable › Deploy (GitOps)
+name: Reusable › Helm Deploy
 
 on:
   workflow_call:
@@ -8,159 +8,137 @@ on:
         required: true
         type: string
       image-tag:
-        description: "New image tag to deploy"
-        required: true
-        type: string
-      image-digest:
-        description: "Image digest for pinning"
+        description: "Image tag to deploy (SHA or semver)"
         required: true
         type: string
       environment:
         description: "Target environment: dev | staging | prod"
+        required: true
+        type: string
+      helm-chart-path:
+        description: "Path to Helm chart inside repo"
         required: false
         type: string
-        default: "dev"
-      gitops-repo:
-        description: "GitOps repository (org/repo)"
+        default: ""   # auto-resolved from service
+      dry-run:
+        description: "Helm dry-run only (no actual deploy)"
         required: false
-        type: string
-        default: "your-org/lumiere-gitops"
-      gitops-branch:
-        description: "Branch in GitOps repo to update"
-        required: false
-        type: string
-        default: "main"
-      helm-values-path:
-        description: "Path to values file inside GitOps repo"
-        required: false
-        type: string
-        default: ""   # auto-resolved from service + environment
+        type: boolean
+        default: false
+
     outputs:
-      pr-url:
-        description: "GitOps PR URL (prod) or commit URL (dev/staging)"
-        value: ${{ jobs.deploy.outputs['pr-url'] }}
+      release-name:
+        description: "Helm release name"
+        value: ${{ jobs.deploy.outputs.release-name }}
+      deployed-image:
+        description: "Full image URI that was deployed"
+        value: ${{ jobs.deploy.outputs.deployed-image }}
     secrets:
-      GITOPS_TOKEN:
-        required: true   # PAT with repo write access to lumiere-gitops
+      AWS_ROLE_ARN:
+        required: true
+      EKS_CLUSTER_NAME:
+        required: true
 
 jobs:
   deploy:
-    name: Deploy › ${{ inputs.service }} → ${{ inputs.environment }}
+    name: Helm Deploy › lumiere-${{ inputs.service }} → ${{ inputs.environment }}
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ inputs.environment }}   # triggers GitHub env protection rules
     permissions:
+      id-token: write
       contents: read
 
     outputs:
-      pr-url: ${{ steps.commit.outputs['pr-url'] || steps.pr.outputs['pr-url'] }}
+      release-name:   ${{ steps.meta.outputs.release-name }}
+      deployed-image: ${{ steps.meta.outputs.image-uri }}
 
     steps:
-      - name: Checkout GitOps repo
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          repository: ${{ inputs.gitops-repo }}
-          token:      ${{ secrets.GITOPS_TOKEN }}
-          ref:        ${{ inputs.gitops-branch }}
-          path:       gitops
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region:     ap-south-1
 
-      - name: Resolve values file path
-        id: resolve
-        run: |
-          if [ -n "${{ inputs.helm-values-path }}" ]; then
-            VALUES_PATH="${{ inputs.helm-values-path }}"
-          else
-            VALUES_PATH="apps/${{ inputs.environment }}/lumiere-${{ inputs.service }}/values.yaml"
-          fi
-          echo "values-path=${VALUES_PATH}" >> "$GITHUB_OUTPUT"
-
-      - name: Install yq
-        run: |
-          sudo wget -qO /usr/local/bin/yq \
-            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
-
-      - name: Update image tag in values file
-        id: update
-        working-directory: gitops
-        run: |
-          VALUES_FILE="${{ steps.resolve.outputs['values-path'] }}"
-
-          if [ ! -f "${VALUES_FILE}" ]; then
-            echo "❌ Values file not found: ${VALUES_FILE}"
-            exit 1
-          fi
-
-          # Update tag and digest
-          yq -i ".image.tag    = \"${{ inputs.image-tag }}\""    "${VALUES_FILE}"
-          yq -i ".image.digest = \"${{ inputs.image-digest }}\"" "${VALUES_FILE}"
-
-          echo "Updated ${VALUES_FILE}:"
-          cat "${VALUES_FILE}"
-
-      - name: Configure git identity
-        working-directory: gitops
-        run: |
-          git config user.name  "lumiere-bot"
-          git config user.email "ci-bot@lumiere.internal"
-
-      - name: Commit and push (dev / staging)
-        id: commit
-        if: inputs.environment != 'prod'
-        working-directory: gitops
-        run: |
-          git add .
-          git commit -m "chore(deploy): bump lumiere-${{ inputs.service }} to ${{ inputs.image-tag }} [${{ inputs.environment }}]
-
-          Service:     lumiere-${{ inputs.service }}
-          Environment: ${{ inputs.environment }}
-          Tag:         ${{ inputs.image-tag }}
-          Digest:      ${{ inputs.image-digest }}
-          Triggered by: ${{ github.repository }}@${{ github.sha }}"
-
-          git push origin ${{ inputs.gitops-branch }}
-
-          COMMIT_URL="https://github.com/${{ inputs.gitops-repo }}/commit/$(git rev-parse HEAD)"
-          echo "pr-url=${COMMIT_URL}" >> "$GITHUB_OUTPUT"
-
-      - name: Open PR (prod — requires review)
-        if: inputs.environment == 'prod'
-        id: pr
-        working-directory: gitops
+      - name: Set deploy metadata
+        id: meta
         env:
-          GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+          SERVICE: ${{ inputs.service }}
+          ENV:     ${{ inputs.environment }}
+          TAG:     ${{ inputs.image-tag }}
         run: |
-          BRANCH="deploy/lumiere-${{ inputs.service }}-${{ inputs.image-tag }}-prod"
-          git checkout -b "${BRANCH}"
-          git add .
-          git commit -m "chore(deploy): bump lumiere-${{ inputs.service }} to ${{ inputs.image-tag }} [prod]"
-          git push origin "${BRANCH}"
+          RELEASE="lumiere-${SERVICE}"
+          NAMESPACE="lumiere-${ENV}"
+          CHART="${{ inputs.helm-chart-path != '' && inputs.helm-chart-path || format('helm/lumiere-{0}', inputs.service) }}"
+          VALUES="helm/lumiere-${SERVICE}/envs/${ENV}/values.yaml"
+          ECR_REGISTRY="${{ vars.ECR_REGISTRY }}"
+          IMAGE_URI="${ECR_REGISTRY}/lumiere-${SERVICE}:${TAG}"
 
-          PR_URL=$(gh pr create \
-            --repo "${{ inputs.gitops-repo }}" \
-            --base "${{ inputs.gitops-branch }}" \
-            --head "${BRANCH}" \
-            --title "🚀 Deploy lumiere-${{ inputs.service }} ${{ inputs.image-tag }} → prod" \
-            --body "## Deployment Summary
+          echo "release-name=${RELEASE}"   >> "$GITHUB_OUTPUT"
+          echo "namespace=${NAMESPACE}"    >> "$GITHUB_OUTPUT"
+          echo "chart=${CHART}"            >> "$GITHUB_OUTPUT"
+          echo "values=${VALUES}"          >> "$GITHUB_OUTPUT"
+          echo "image-uri=${IMAGE_URI}"    >> "$GITHUB_OUTPUT"
 
-          | Field       | Value |
-          |-------------|-------|
-          | Service     | \`lumiere-${{ inputs.service }}\` |
-          | Environment | \`prod\` |
-          | Image Tag   | \`${{ inputs.image-tag }}\` |
-          | Digest      | \`${{ inputs.image-digest }}\` |
-          | Source SHA  | \`${{ github.sha }}\` |
-          | Pipeline    | [View run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name   ${{ secrets.EKS_CLUSTER_NAME }} \
+            --region ap-south-1
 
-          > ⚠️ This PR deploys to **production**. Requires approval before merge.")
+      - name: Create namespace (idempotent)
+        run: |
+          kubectl apply -f k8s/base/namespace/lumiere-${{ inputs.environment }}.yaml
 
-          echo "pr-url=${PR_URL}" >> "$GITHUB_OUTPUT"
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.0
+
+      - name: Helm lint
+        run: |
+          helm lint ${{ steps.meta.outputs.chart }} \
+            -f ${{ steps.meta.outputs.values }} \
+            --set image.tag=${{ inputs.image-tag }}
+
+      - name: Helm upgrade --install
+        run: |
+          helm upgrade --install \
+            ${{ steps.meta.outputs.release-name }} \
+            ${{ steps.meta.outputs.chart }} \
+            --namespace   ${{ steps.meta.outputs.namespace }} \
+            --create-namespace \
+            -f            ${{ steps.meta.outputs.values }} \
+            --set         image.tag=${{ inputs.image-tag }} \
+            --set         image.repository=${{ vars.ECR_REGISTRY }}/lumiere-${{ inputs.service }} \
+            --atomic \
+            --timeout     5m \
+            --wait \
+            ${{ inputs.dry-run && '--dry-run' || '' }}
+
+      - name: Verify rollout
+        if: ${{ !inputs.dry-run }}
+        run: |
+          kubectl rollout status deployment/${{ steps.meta.outputs.release-name }} \
+            -n ${{ steps.meta.outputs.namespace }} \
+            --timeout=3m
+
+      - name: Print pod status
+        if: always()
+        run: |
+          kubectl get pods -n ${{ steps.meta.outputs.namespace }} \
+            -l app=lumiere-${{ inputs.service }} \
+            -o wide || true
 
       - name: Summary
+        if: always()
         run: |
-          echo "### 🚀 GitOps Deploy — ${{ inputs.service }}"         >> "$GITHUB_STEP_SUMMARY"
-          echo "| Field       | Value |"                              >> "$GITHUB_STEP_SUMMARY"
-          echo "|-------------|-------|"                              >> "$GITHUB_STEP_SUMMARY"
-          echo "| Environment | \`${{ inputs.environment }}\` |"     >> "$GITHUB_STEP_SUMMARY"
-          echo "| Image Tag   | \`${{ inputs.image-tag }}\` |"       >> "$GITHUB_STEP_SUMMARY"
-          echo "| GitOps Repo | \`${{ inputs.gitops-repo }}\` |"     >> "$GITHUB_STEP_SUMMARY"
-          echo "| Link        | ${{ steps.commit.outputs['pr-url'] || steps.pr.outputs['pr-url'] }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "### 🚀 Helm Deploy — lumiere-${{ inputs.service }}"          >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field       | Value |"                                      >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------------|-------|"                                      >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | \`${{ inputs.environment }}\` |"             >> "$GITHUB_STEP_SUMMARY"
+          echo "| Release     | \`${{ steps.meta.outputs.release-name }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image       | \`${{ steps.meta.outputs.image-uri }}\` |"   >> "$GITHUB_STEP_SUMMARY"
+          echo "| Dry Run     | \`${{ inputs.dry-run }}\` |"                 >> "$GITHUB_STEP_SUMMARY"

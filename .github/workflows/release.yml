@@ -1,11 +1,132 @@
 name: Release
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"         # v1.2.3
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+" # v1.2.3-rc.1
+
+env:
+  AWS_REGION: ap-south-1
 
 jobs:
-  noop:
-    name: Release placeholder
+  # ── Extract release metadata ───────────────────────────────────────────────
+  meta:
+    name: Release Metadata
     runs-on: ubuntu-latest
+    outputs:
+      version:     ${{ steps.tag.outputs.version }}
+      sha:         ${{ steps.sha.outputs.sha }}
+      is-rc:       ${{ steps.tag.outputs.is-rc }}
     steps:
-      - run: echo "Release workflow is not implemented yet."
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: tag
+        run: |
+          VERSION="${GITHUB_REF_NAME}"                          # e.g. v1.2.3
+          IS_RC=$( [[ "$VERSION" == *"-rc."* ]] && echo "true" || echo "false" )
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "is-rc=${IS_RC}"     >> "$GITHUB_OUTPUT"
+
+      - name: Get SHA for this tag
+        id: sha
+        run: echo "sha=$(git rev-list -n 1 ${{ github.ref_name }})" >> "$GITHUB_OUTPUT"
+
+  # ── Re-tag existing ECR image with semver (no rebuild) ────────────────────
+  retag:
+    name: Retag ECR Images › ${{ matrix.service }}
+    needs: meta
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [frontend, backend]
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: ./.github/actions/aws-ecr-login
+
+      - name: Pull SHA image and push semver tag
+        run: |
+          SHA_IMAGE="${{ vars.ECR_REGISTRY }}/lumiere-${{ matrix.service }}:${{ needs.meta.outputs.sha }}"
+          VER_IMAGE="${{ vars.ECR_REGISTRY }}/lumiere-${{ matrix.service }}:${{ needs.meta.outputs.version }}"
+
+          docker pull  "$SHA_IMAGE"
+          docker tag   "$SHA_IMAGE" "$VER_IMAGE"
+          docker push  "$VER_IMAGE"
+
+          # Also tag as latest if not an RC
+          if [ "${{ needs.meta.outputs.is-rc }}" == "false" ]; then
+            LATEST="${{ vars.ECR_REGISTRY }}/lumiere-${{ matrix.service }}:latest"
+            docker tag  "$SHA_IMAGE" "$LATEST"
+            docker push "$LATEST"
+          fi
+
+          echo "✅ Tagged $SHA_IMAGE → $VER_IMAGE"
+
+  # ── Deploy versioned image to staging (RC) or prod (stable) ───────────────
+  deploy-staging:
+    name: Deploy › ${{ matrix.service }} → staging
+    needs: [meta, retag]
+    if: needs.meta.outputs.is-rc == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [client, server]
+    uses: ./.github/workflows/reusable/_deploy.yml
+    with:
+      service:     ${{ matrix.service }}
+      image-tag:   ${{ needs.meta.outputs.version }}
+      environment: staging
+    secrets:
+      AWS_ROLE_ARN:     ${{ secrets.AWS_ROLE_ARN }}
+      EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+
+  deploy-prod:
+    name: Deploy › ${{ matrix.service }} → prod
+    needs: [meta, retag]
+    if: needs.meta.outputs.is-rc == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [client, server]
+    uses: ./.github/workflows/reusable/_deploy.yml
+    with:
+      service:     ${{ matrix.service }}
+      image-tag:   ${{ needs.meta.outputs.version }}
+      environment: prod      # ← requires manual approval in GitHub Environments
+    secrets:
+      AWS_ROLE_ARN:     ${{ secrets.AWS_ROLE_ARN }}
+      EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+
+  # ── Create GitHub Release ──────────────────────────────────────────────────
+  github-release:
+    name: GitHub Release
+    needs: [meta, deploy-prod]
+    if: needs.meta.outputs.is-rc == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   ${{ needs.meta.outputs.version }}
+          name:       "Lumiere ${{ needs.meta.outputs.version }}"
+          generate_release_notes: true
+          draft:      false
+          prerelease: false

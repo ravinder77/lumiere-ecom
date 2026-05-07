@@ -61,13 +61,6 @@ jobs:
       service:      repo
       fail-on-leak: true
 
-  iac-scan:
-    name: IaC Scan
-    uses: ./.github/workflows/reusable/_iac-scan.yml
-    with:
-      scan-path:          "."
-      framework:          "dockerfile,kubernetes,github_actions,secrets"
-      soft-fail:          true
 
   notify:
     name: Notify › Nightly Results
@@ -77,7 +70,6 @@ jobs:
       - sca-frontend
       - sca-backend
       - secrets-detect
-      - iac-scan
     if: always()
     uses: ./.github/workflows/reusable/_notify.yml
     with:

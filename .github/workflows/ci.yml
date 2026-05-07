@@ -14,6 +14,7 @@ on:
       - "frontend/**"
       - "backend/**"
       - ".github/workflows/**"
+      - "helm/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -44,6 +45,7 @@ jobs:
       services: ${{ steps.filter.outputs.changes }}
       frontend:   ${{ steps.filter.outputs.frontend }}
       backend:   ${{ steps.filter.outputs.backend }}
+      helm: ${{steps.filter.outputs.helm}}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -58,6 +60,9 @@ jobs:
               - 'backend/**'
               - '.github/workflows/**'
               - '.github/actions/**'
+            helm:
+              - 'helm/frontend/**'
+              - 'helm/backend/**'
 
   # ═══════════════════════════════════════════════════════════════════════════
   # 1 ▸ Secrets detection (repo-wide, runs once)
@@ -72,7 +77,7 @@ jobs:
       fail-on-leak:  true
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # 2 ▸ SAST — matrix: client + server
+  # 2 ▸ SAST — matrix: frontend + backend
   # ═══════════════════════════════════════════════════════════════════════════
   sast:
     name: SAST
@@ -88,17 +93,36 @@ jobs:
       language:         javascript
       fail-on-severity: ERROR
     secrets:
-      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
       SONAR_TOKEN:       ${{ secrets.SONAR_TOKEN }}
       SONAR_HOST_URL:    ${{ secrets.SONAR_HOST_URL }}
 
+
   # ═══════════════════════════════════════════════════════════════════════════
-  # 3 ▸ Build & push — split by service so outputs stay service-specific
+  # 3 ▸ SCA — matrix per changed service
+  # ═══════════════════════════════════════════════════════════════════════════
+  sca:
+    name: SCA
+    needs: [ changes, secrets-detect ]
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.changes.outputs.services) }}
+
+    uses: ./.github/workflows/reusable/_sca.yml
+    with:
+      service: ${{ matrix.service }}
+      fail-on-severity: high
+
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 4 ▸ Build & push — split by service so outputs stay service-specific
   # ═══════════════════════════════════════════════════════════════════════════
   build-frontend:
     name: Build & Push › frontend
-    needs: [changes, sast]
+    needs: [changes, sast, sca]
     if: needs.changes.outputs.frontend == 'true'
+
     uses: ./.github/workflows/reusable/_build.yml
     with:
       service:   frontend
@@ -109,29 +133,32 @@ jobs:
 
   build-backend:
     name: Build & Push › backend
-    needs: [changes, sast]
+    needs: [ changes, sast, sca ]
     if: needs.changes.outputs.backend == 'true'
+
     uses: ./.github/workflows/reusable/_build.yml
     with:
-      service:   backend
+      service: backend
       image-tag: ${{ github.sha }}
-      push:      ${{ github.event_name != 'pull_request' }}
+      push: ${{ github.event_name != 'pull_request' }}
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # 4 ▸ Container scan
+  # 5 ▸ Container scan
   # ═══════════════════════════════════════════════════════════════════════════
   container-scan-frontend:
-    name: Container Scan › frontend
+    name: Container Scan › Frontend
     needs: [changes, build-frontend]
     if: |
       github.event_name != 'pull_request' &&
       needs.changes.outputs.frontend == 'true'
+      
+
     uses: ./.github/workflows/reusable/_container-scan.yml
     with:
       service:          frontend
-      image-uri:        ${{ needs['build-frontend'].outputs['image-uri'] }}
+      image-uri:        ${{ needs.build-frontend.outputs['image-uri'] }}
       severity:         CRITICAL,HIGH
       fail-on-findings: true
       ignore-unfixed:   true
@@ -139,59 +166,66 @@ jobs:
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
   container-scan-backend:
-    name: Container Scan › backend
-    needs: [changes, build-backend]
+    name: Container Scan › Backend
+    needs: [ changes, build-backend ]
     if: |
       github.event_name != 'pull_request' &&
       needs.changes.outputs.backend == 'true'
+
+
     uses: ./.github/workflows/reusable/_container-scan.yml
     with:
-      service:          backend
-      image-uri:        ${{ needs['build-backend'].outputs['image-uri'] }}
-      severity:         CRITICAL,HIGH
+      service: backend
+      image-uri: ${{ needs.build-backend.outputs['image-uri'] }}
+      severity: CRITICAL,HIGH
       fail-on-findings: true
-      ignore-unfixed:   true
+      ignore-unfixed: true
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
+
+
+
   # ═══════════════════════════════════════════════════════════════════════════
-  # 5 ▸ Sign & Attest
+  # 6 ▸ Sign & Attest
   # ═══════════════════════════════════════════════════════════════════════════
   sign-attest-frontend:
-    name: Sign & Attest › frontend
+    name: Sign & Attest › Frontend
     needs: [changes, build-frontend, container-scan-frontend]
     if: |
       github.event_name != 'pull_request' &&
-      github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.frontend == 'true'
+      github.ref == 'refs/heads/main' && (needs.changes.outputs.frontend == 'true')
+
     uses: ./.github/workflows/reusable/_sign-attest.yml
     with:
       service:      frontend
-      image-uri:    ${{ needs['build-frontend'].outputs['image-uri'] }}
-      image-digest: ${{ needs['build-frontend'].outputs['image-digest'] }}
+      image-uri:    ${{ needs.build-frontend.outputs['image-uri'] }}
+      image-digest: ${{ needs.build-frontend.outputs['image-digest'] }}
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
   sign-attest-backend:
-    name: Sign & Attest › backend
-    needs: [changes, build-backend, container-scan-backend]
+    name: Sign & Attest › Backend
+    needs: [ changes, build-backend, container-scan-backend ]
     if: |
       github.event_name != 'pull_request' &&
-      github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.backend == 'true'
+      github.ref == 'refs/heads/main' && (needs.changes.outputs.backend == 'true')
+
     uses: ./.github/workflows/reusable/_sign-attest.yml
     with:
-      service:      backend
-      image-uri:    ${{ needs['build-backend'].outputs['image-uri'] }}
-      image-digest: ${{ needs['build-backend'].outputs['image-digest'] }}
+      service: backend
+      image-uri: ${{ needs.build-backend.outputs['image-uri'] }}
+      image-digest: ${{ needs.build-backend.outputs['image-digest'] }}
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+
+
 
   # ═══════════════════════════════════════════════════════════════════════════
   # 6 ▸ Deploy to dev
   # ═══════════════════════════════════════════════════════════════════════════
   deploy-dev-frontend:
-    name: Deploy › dev › frontend
+    name: Deploy › dev › Frontend
     needs: [changes, build-frontend, sign-attest-frontend]
     if: |
       github.event_name == 'push' &&
@@ -201,15 +235,10 @@ jobs:
     with:
       service:       frontend
       image-tag:     ${{ github.sha }}
-      image-digest:  ${{ needs['build-frontend'].outputs['image-digest'] }}
-      environment:   dev
-      gitops-repo:   your-org/lumiere-gitops
-      gitops-branch: main
-    secrets:
-      GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+      environment: dev
 
   deploy-dev-backend:
-    name: Deploy › dev › backend
+    name: Deploy › dev › Backend
     needs: [changes, build-backend, sign-attest-backend]
     if: |
       github.event_name == 'push' &&
@@ -219,12 +248,7 @@ jobs:
     with:
       service:       backend
       image-tag:     ${{ github.sha }}
-      image-digest:  ${{ needs['build-backend'].outputs['image-digest'] }}
       environment:   dev
-      gitops-repo:   your-org/lumiere-gitops
-      gitops-branch: main
-    secrets:
-      GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
 
   # ═══════════════════════════════════════════════════════════════════════════
   # 7 ▸ Pipeline summary
@@ -235,6 +259,7 @@ jobs:
     needs:
       - secrets-detect
       - sast
+      - sca
       - build-frontend
       - build-backend
       - container-scan-frontend
@@ -247,20 +272,30 @@ jobs:
     steps:
       - name: Write summary
         run: |
-          echo "# 🚀 Lumiere CI Pipeline" >> "$GITHUB_STEP_SUMMARY"
-          echo ""                          >> "$GITHUB_STEP_SUMMARY"
-          echo "| Stage            | Status |"                                               >> "$GITHUB_STEP_SUMMARY"
-          echo "|------------------|--------|"                                               >> "$GITHUB_STEP_SUMMARY"
-          echo "| Secrets Detect   | ${{ needs['secrets-detect'].result }} |"              >> "$GITHUB_STEP_SUMMARY"
-          echo "| SAST             | ${{ needs.sast.result }} |"                            >> "$GITHUB_STEP_SUMMARY"
-          echo "| Build frontend   | ${{ needs['build-frontend'].result }} |"              >> "$GITHUB_STEP_SUMMARY"
-          echo "| Build backend    | ${{ needs['build-backend'].result }} |"               >> "$GITHUB_STEP_SUMMARY"
-          echo "| Scan frontend    | ${{ needs['container-scan-frontend'].result }} |"     >> "$GITHUB_STEP_SUMMARY"
-          echo "| Scan backend     | ${{ needs['container-scan-backend'].result }} |"      >> "$GITHUB_STEP_SUMMARY"
-          echo "| Sign frontend    | ${{ needs['sign-attest-frontend'].result }} |"        >> "$GITHUB_STEP_SUMMARY"
-          echo "| Sign backend     | ${{ needs['sign-attest-backend'].result }} |"         >> "$GITHUB_STEP_SUMMARY"
-          echo "| Deploy frontend  | ${{ needs['deploy-dev-frontend'].result }} |"         >> "$GITHUB_STEP_SUMMARY"
-          echo "| Deploy backend   | ${{ needs['deploy-dev-backend'].result }} |"          >> "$GITHUB_STEP_SUMMARY"
-          echo ""                          >> "$GITHUB_STEP_SUMMARY"
-          echo "**Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Branch:** \`${{ github.ref_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "# Lumiere CI/CD Pipeline"                  >> "$GITHUB_STEP_SUMMARY"
+          echo ""                                               >> "$GITHUB_STEP_SUMMARY"
+          echo "**Commit:** \`${{ github.sha }}\` | **Branch:** \`${{ github.ref_name }}\` | **Actor:** \`${{ github.actor }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo ""                                               >> "$GITHUB_STEP_SUMMARY"
+          echo "## Security"                                    >> "$GITHUB_STEP_SUMMARY"
+          echo "| Stage          | Status  |"                   >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------------|-------- |"                   >> "$GITHUB_STEP_SUMMARY"
+          echo "| Secrets Detect           | ${{ needs.secrets-detect.result }} |"  >> "$GITHUB_STEP_SUMMARY"
+          echo "| SAST                     | ${{ needs.sast.result }} |"            >> "$GITHUB_STEP_SUMMARY"
+          echo "| SCA                      | ${{ needs.sca.result }} |"             >> "$GITHUB_STEP_SUMMARY"
+          echo "| Container Scan Frontend  | ${{ needs.container-scan-frontend.result }} |"  >> "$GITHUB_STEP_SUMMARY"
+          echo "| Container Scan Backend   | ${{ needs.container-scan-backend.result }} |"  >> "$GITHUB_STEP_SUMMARY"
+          echo "| Sign & Attest Frontend   | ${{ needs.sign-attest-frontend.result }} |"     >> "$GITHUB_STEP_SUMMARY"
+          echo "| Sign & Attest Frontend   | ${{ needs.sign-attest-backend.result }} |"     >> "$GITHUB_STEP_SUMMARY"
+          echo "----------------------------------"                                         >> "$GITHUB_STEP_SUMMARY"
+          echo "## Deploy"                                      >> "$GITHUB_STEP_SUMMARY"
+          echo "| Stage              | Status |"               >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------------------|--------|"               >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build Frontend     | ${{ needs.build-frontend.result }} |"           >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build Backend      | ${{ needs.build-backend.result }} |"             >> "$GITHUB_STEP_SUMMARY"
+          echo "| Dev (client)       | ${{ needs.deploy-dev-frontend.result }} |"       >> "$GITHUB_STEP_SUMMARY"
+          echo "| Dev (server)       | ${{ needs.deploy-dev-backend.result }} |"        >> "$GITHUB_STEP_SUMMARY"
+#          echo "| Staging (client)   | ${{ needs.deploy-staging-frontend.result }} |" >> "$GITHUB_STEP_SUMMARY"
+#          echo "| Staging (server)   | ${{ needs.deploy-staging-backend.result }} |" >> "$GITHUB_STEP_SUMMARY"
+#          echo "| Prod (client)      | ${{ needs.deploy-prod-frontend.result }} |"    >> "$GITHUB_STEP_SUMMARY"
+#          echo "| Prod (server)      | ${{ needs.deploy-prod-backend.result }} |"    >> "$GITHUB_STEP_SUMMARY"
+#

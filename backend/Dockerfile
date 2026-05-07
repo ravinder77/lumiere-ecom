@@ -7,7 +7,7 @@ WORKDIR /app
 
 COPY package*.json ./
 
-RUN npm ci
+RUN npm ci && npm cache clean --force
 
 # =============================================================================
 # Stage 2: build — generate Prisma client, compile TypeScript
@@ -15,6 +15,7 @@ RUN npm ci
 FROM deps AS build
 
 COPY prisma ./prisma
+
 
 RUN npm run db:generate
 
@@ -35,7 +36,9 @@ FROM node:25-alpine3.22 AS runtime
 
 WORKDIR /app
 
-COPY --from=build /app/package.json ./package.json
+ENV NODE_ENV=production
+
+COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma

@@ -54,22 +54,22 @@ export function createApp() {
   app.use('/api/reviews', reviewsRouter);
   app.use('/api/admin', adminRouter);
 
-  app.get('/api/health', async (_req, res) => {
-    let dbStatus = 'disconnected';
-
-    try {
-      await prisma.$queryRaw`SELECT 1`;
-      dbStatus = 'connected';
-    } catch {
-      // Keep health checks stable even when the database is unavailable.
-    }
-
-    res.json({
+  app.get('/health', (_req, res) => {
+    res.status(200).json({
       status: 'ok',
       timestamp: new Date().toISOString(),
-      version: '1.0.0',
-      database: dbStatus,
+      version: '1.0.1',
     });
+  });
+
+  app.get('/ready', async (_req, res) => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      res.status(200).json({ status: 'ready' });
+    } catch (err) {
+      console.log(err)
+      res.status(500).json({ status: 'not_ready' });
+    }
   });
 
   app.use((_req, res) => {
