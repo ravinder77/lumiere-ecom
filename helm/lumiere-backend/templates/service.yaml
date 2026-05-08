@@ -3,7 +3,7 @@ kind: Service
 metadata:
   name: {{ include "lumiere-backend.fullname" . }}
   labels:
-    {{- include "lumiere-backend.labels" . | nindent 4 }}
+    app.kubernetes.io/name: lumiere-backend
 spec:
   type: {{ .Values.service.type }}
   ports:
@@ -12,4 +12,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "lumiere-backend.selectorLabels" . | nindent 4 }}
+    {{ include "lumiere-backend.selectorLabels" . | nindent 4 }}

@@ -50,13 +50,3 @@ app.kubernetes.io/name: {{ include "lumiere-frontend.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "lumiere-frontend.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "lumiere-frontend.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
-{{- end }}
-{{- end }}
