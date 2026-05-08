@@ -8,8 +8,8 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`\n🚀  Server:  http://localhost:${PORT}`);
   console.log(`📦  API:     http://localhost:${PORT}/api`);
-  console.log(`🩺  Health:  http://localhost:${PORT}/health\n`);
+  console.log(`🩺  Health:  http://localhost:${PORT}/health`);
+  console.log(`✅  Ready:   http://localhost:${PORT}/ready\n`);
 });
 
 export default app;
-

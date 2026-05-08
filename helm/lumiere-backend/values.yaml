@@ -6,7 +6,7 @@ replicaCount: 1
 image:
   repository: docker.io/ravinder50300/lumiere-backend
   pullPolicy: IfNotPresent
-  tag: "v1.0.4"
+  tag: "v1.0.1"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -17,6 +17,10 @@ containerPort: 4000
 env:
   - name: PORT
     value: "4000"
+
+envFrom:
+  - secretRef:
+      name: lumiere-backend-env
 
 # This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
 serviceAccount:
@@ -109,16 +113,16 @@ resources:
 
 livenessProbe:
   httpGet:
-    path: /api/health
+    path: /health
     port: http
 readinessProbe:
   httpGet:
-    path: /api/health
+    path: /ready
     port: http
 
 startupProbe:
   httpGet:
-    path: /api/health
+    path: /health
     port: http
   failureThreshold: 30
   periodSeconds: 10
