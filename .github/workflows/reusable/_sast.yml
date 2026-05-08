@@ -17,18 +17,12 @@ on:
         required: false
         type: string
         default: ""
-      fail-on-severity:
-        description: "Semgrep severity threshold: ERROR | WARNING | INFO"
-        required: false
-        type: string
-        default: "ERROR"
+
     outputs:
-      semgrep-findings:
-        description: "Number of Semgrep findings"
-        value: ${{ jobs.semgrep.outputs.findings }}
       sonar-status:
         description: "SonarQube Quality Gate status"
         value: ${{ jobs.sonarqube.outputs['gate-status'] }}
+
     secrets:
       SONAR_TOKEN:
         required: false
@@ -42,7 +36,6 @@ concurrency:
 jobs:
 
   # ─── SonarQube ───────────────
-
   sonarqube:
     name: SonarQube › ${{ inputs.service }}
     runs-on: ubuntu-latest

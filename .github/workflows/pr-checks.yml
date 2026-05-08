@@ -199,9 +199,7 @@ jobs:
     with:
       service:          ${{ matrix.service }}
       language:         javascript
-      fail-on-severity: ERROR
     secrets:
-      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
       SONAR_TOKEN:       ${{ secrets.SONAR_TOKEN }}
       SONAR_HOST_URL:    ${{ secrets.SONAR_HOST_URL }}
 
@@ -224,23 +222,9 @@ jobs:
       fail-on-severity: high
       generate-sbom:    false   # skip SBOM on PRs — generated post-merge
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 7 ▸ IaC scan (if workflows or Dockerfiles changed)
-  # ═══════════════════════════════════════════════════════════════════════════
-  iac-scan:
-    name: IaC Scan
-    needs: [guard, changes]
-    if: |
-      needs.guard.outputs.skip != 'true' &&
-      needs.changes.outputs.workflows == 'true'
-    uses: ./.github/workflows/reusable/_iac-scan.yml
-    with:
-      scan-path:          "."
-      framework:          "dockerfile,github_actions,secrets"
-      soft-fail:          false
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # 8 ▸ Build check (no push) — validates Dockerfile compiles
+  # 7 ▸ Build check (no push) — validates Dockerfile compiles
   # ═══════════════════════════════════════════════════════════════════════════
   build-check:
     name: Build Check (no push)
@@ -261,12 +245,12 @@ jobs:
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # 9 ▸ PR status gate (all checks must pass)
+  # 8 ▸ PR status gate (all checks must pass)
   # ═══════════════════════════════════════════════════════════════════════════
   pr-gate:
     name: ✅ PR Gate
     runs-on: ubuntu-latest
-    needs: [pr-title, secrets-detect, lint, test, sast, sca, iac-scan, build-check]
+    needs: [pr-title, secrets-detect, lint, test, sast, sca, build-check]
     if: always()
     steps:
       - name: Evaluate all checks

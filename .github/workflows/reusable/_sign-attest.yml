@@ -131,10 +131,10 @@ jobs:
 
       - name: Summary
         run: |
-          echo "### ✍️ Sign & Attest — ${{ inputs.service }}"        >> "$GITHUB_STEP_SUMMARY"
+          echo "# Sign & Attest — ${{ inputs.service }}"        >> "$GITHUB_STEP_SUMMARY"
           echo "| Field       | Value |"                             >> "$GITHUB_STEP_SUMMARY"
           echo "|-------------|-------|"                             >> "$GITHUB_STEP_SUMMARY"
-          echo "| Image       | \`${{ inputs.image-uri }}\` |"      >> "$GITHUB_STEP_SUMMARY"
-          echo "| Digest      | \`${{ inputs.image-digest }}\` |"   >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image       | \`${{ inputs.image-uri }}\` |"       >> "$GITHUB_STEP_SUMMARY"
+          echo "| Digest      | \`${{ inputs.image-digest }}\` |"    >> "$GITHUB_STEP_SUMMARY"
           echo "| Signed      | ✅ Keyless (Sigstore) |"             >> "$GITHUB_STEP_SUMMARY"
           echo "| Attestations| Git provenance, SBOM, Vuln report |" >> "$GITHUB_STEP_SUMMARY"

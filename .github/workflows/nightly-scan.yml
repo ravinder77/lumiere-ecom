@@ -61,32 +61,31 @@ jobs:
       service:      repo
       fail-on-leak: true
 
-
-  notify:
-    name: Notify › Nightly Results
-    needs:
-      - container-scan-frontend
-      - container-scan-backend
-      - sca-frontend
-      - sca-backend
-      - secrets-detect
-    if: always()
-    uses: ./.github/workflows/reusable/_notify.yml
-    with:
-      status: >-
-        ${{
-          contains(needs.*.result, 'failure') && 'failure' ||
-          contains(needs.*.result, 'cancelled') && 'cancelled' ||
-          'success'
-        }}
-      service:       "nightly-scan"
-      environment:   "prod"
-      custom-message: >-
-        Container scan: client=${{ needs['container-scan-frontend'].result }},
-        server=${{ needs['container-scan-backend'].result }} |
-        SCA: client=${{ needs['sca-frontend'].result }},
-        server=${{ needs['sca-backend'].result }} |
-        Secrets: ${{ needs['secrets-detect'].result }} |
-        IaC: ${{ needs['iac-scan'].result }}
-    secrets:
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+#  notify:
+#    name: Notify › Nightly Results
+#    needs:
+#      - container-scan-frontend
+#      - container-scan-backend
+#      - sca-frontend
+#      - sca-backend
+#      - secrets-detect
+#    if: always()
+#    uses: ./.github/workflows/reusable/_notify.yml
+#    with:
+#      status: >-
+#        ${{
+#          contains(needs.*.result, 'failure') && 'failure' ||
+#          contains(needs.*.result, 'cancelled') && 'cancelled' ||
+#          'success'
+#        }}
+#      service:       "nightly-scan"
+#      environment:   "prod"
+#      custom-message: >-
+#        Container scan: client=${{ needs['container-scan-frontend'].result }},
+#        server=${{ needs['container-scan-backend'].result }} |
+#        SCA: client=${{ needs['sca-frontend'].result }},
+#        server=${{ needs['sca-backend'].result }} |
+#        Secrets: ${{ needs['secrets-detect'].result }} |
+#        IaC: ${{ needs['iac-scan'].result }}
+#    secrets:
+#      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
